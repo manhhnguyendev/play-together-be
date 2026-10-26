@@ -1,0 +1,86 @@
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { AuthUser } from '../../common/security/auth-user';
+import { CurrentUser } from '../../common/security/current-user.decorator';
+import { CreateOrderDto, EndEarlyDto, ListOrdersQuery, RejectOrderDto } from './orders.dto';
+import { OrdersService } from './orders.service';
+
+@ApiTags('orders')
+@ApiBearerAuth()
+@Controller('orders')
+export class OrdersController {
+  constructor(private readonly orders: OrdersService) {}
+
+  @Post()
+  @ApiOperation({ summary: 'Create a hire request for a player' })
+  create(@CurrentUser() user: AuthUser, @Body() dto: CreateOrderDto) {
+    return this.orders.create(user.id, dto);
+  }
+
+  @Get()
+  @ApiOperation({ summary: 'Orders I created as a hirer' })
+  mine(@CurrentUser() user: AuthUser, @Query() query: ListOrdersQuery) {
+    return this.orders.listMine(user.id, query);
+  }
+
+  @Get('requests')
+  @ApiOperation({ summary: 'Hire requests I received as a player' })
+  requests(@CurrentUser() user: AuthUser, @Query() query: ListOrdersQuery) {
+    return this.orders.listRequests(user.id, query);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Order detail' })
+  get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.orders.get(id, user);
+  }
+
+  @Get(':id/history')
+  @ApiOperation({ summary: 'Order status timeline' })
+  history(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.orders.history(id, user);
+  }
+
+  @Post(':id/accept')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Accept a hire request and move funds into escrow' })
+  accept(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.orders.accept(user.id, id);
+  }
+
+  @Post(':id/reject')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Reject a hire request' })
+  reject(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RejectOrderDto,
+  ) {
+    return this.orders.reject(user.id, id, dto);
+  }
+
+  @Post(':id/cancel')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Cancel a pending hire request (hirer only)' })
+  cancel(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.orders.cancel(user.id, id);
+  }
+
+  @Post(':id/complete')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Complete a session after its scheduled end' })
+  complete(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.orders.complete(user.id, id);
+  }
+
+  @Post(':id/end-early')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'End an accepted session early with prorated settlement' })
+  endEarly(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: EndEarlyDto,
+  ) {
+    return this.orders.endEarly(user.id, id, dto);
+  }
+}
