@@ -221,6 +221,7 @@ export type UserSummary = {
   gender: 'MALE' | 'FEMALE' | 'OTHER';
   bio: string | null;
   status: 'ONLINE' | 'OFFLINE' | 'BUSY' | 'MAINTAIN';
+  role: 'USER' | 'ADMIN' | 'CHARITY';
   isActive: boolean;
   isPlayer: boolean;
   pricePerHour: number;

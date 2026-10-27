@@ -12,6 +12,7 @@ export function toUserSummary(user: User, options: { includeEmail?: boolean } = 
     gender: user.gender,
     bio: user.bio,
     status: user.status,
+    role: user.role,
     isActive: user.isActive,
     isPlayer: user.isPlayer,
     pricePerHour: user.pricePerHour,

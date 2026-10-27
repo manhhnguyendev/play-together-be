@@ -37,6 +37,7 @@ export class CreateConfigDto {
 export class UpdateConfigDto extends PartialType(CreateConfigDto) {}
 
 export class ResolvedConfigDto {
+  id: string | null;
   key: string;
   title: string;
   value: number;

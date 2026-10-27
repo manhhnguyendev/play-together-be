@@ -55,6 +55,7 @@ export class SystemConfigService {
 
     for (const [key, preset] of Object.entries(CONFIG_DEFAULTS)) {
       merged.set(key, {
+        id: null,
         key,
         title: preset.title,
         value: preset.value,
@@ -65,6 +66,7 @@ export class SystemConfigService {
 
     for (const row of rows) {
       merged.set(row.key, {
+        id: row.id,
         key: row.key,
         title: row.title,
         value: row.value,
