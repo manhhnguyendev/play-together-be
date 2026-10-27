@@ -4,6 +4,7 @@ import type { Paginated } from '../../common/pagination/pagination';
 import { Public } from '../../common/security/decorators';
 import { CatalogService } from './catalog.service';
 import {
+  FavoriteGameDto,
   GameDetail,
   GamePage,
   GameRankDto,
@@ -13,6 +14,7 @@ import {
   GameView,
   ListGamesQuery,
   ListGameTypesQuery,
+  MostFavoritesQuery,
 } from './catalog.dto';
 
 @ApiTags('catalog')
@@ -26,6 +28,14 @@ export class CatalogController {
   @ApiOkResponse({ type: GamePage })
   listGames(@Query() query: ListGamesQuery): Promise<Paginated<GameView>> {
     return this.catalog.listGames(query);
+  }
+
+  @Public()
+  @Get('games/most-favorited')
+  @ApiOperation({ summary: 'Games most often marked as a favorite' })
+  @ApiOkResponse({ type: [FavoriteGameDto] })
+  mostFavorited(@Query() query: MostFavoritesQuery): Promise<FavoriteGameDto[]> {
+    return this.catalog.mostFavorited(query.limit);
   }
 
   @Public()

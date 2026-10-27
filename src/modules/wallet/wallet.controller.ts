@@ -8,10 +8,17 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { AuthUser } from '../../common/security/auth-user';
 import { CurrentUser } from '../../common/security/current-user.decorator';
-import { CreateDepositDto, ListTransactionsQuery, ListWithdrawalsQuery, RequestWithdrawalDto } from './wallet.dto';
+import {
+  CreateDepositDto,
+  EarningsSummaryDto,
+  ListTransactionsQuery,
+  ListWithdrawalsQuery,
+  ReleasePendingCreditsResultDto,
+  RequestWithdrawalDto,
+} from './wallet.dto';
 import { WalletService } from './wallet.service';
 
 @ApiTags('wallet')
@@ -24,6 +31,21 @@ export class WalletController {
   @ApiOperation({ summary: 'My wallet balances and upcoming releases' })
   summary(@CurrentUser() user: AuthUser) {
     return this.wallet.getSummary(user.id);
+  }
+
+  @Post('pending-credits/release')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Move my matured pending credits into the available balance' })
+  @ApiOkResponse({ type: ReleasePendingCreditsResultDto })
+  releasePendingCredits(@CurrentUser() user: AuthUser) {
+    return this.wallet.releaseDueCredits(user.id);
+  }
+
+  @Get('earnings/summary')
+  @ApiOperation({ summary: 'My player earnings for today, this month and all time' })
+  @ApiOkResponse({ type: EarningsSummaryDto })
+  earnings(@CurrentUser() user: AuthUser) {
+    return this.wallet.earningsSummary(user.id);
   }
 
   @Get('transactions')

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, count, eq, exists, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, exists, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { DB, type AppDatabase } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
@@ -10,6 +10,7 @@ import {
   gameTypeLinks,
   gameTypes,
   orderGames,
+  userFavorites,
   userSkills,
   type Game,
   type GameRank,
@@ -19,6 +20,7 @@ import type {
   CreateGameDto,
   CreateGameTypeDto,
   CreateRankDto,
+  FavoriteGameDto,
   GameDetail,
   GameTypeDetail,
   GameTypeView,
@@ -33,8 +35,24 @@ import type {
 export class CatalogService {
   constructor(@Inject(DB) private readonly db: AppDatabase) {}
 
-  async listGames(query: ListGamesQuery): Promise<Paginated<GameView>> {
-    const conditions: SQL[] = [];
+  async mostFavorited(limit: number): Promise<FavoriteGameDto[]> {
+    const rows = await this.db
+      .select({
+        id: games.id,
+        name: games.name,
+        displayName: games.displayName,
+        favoriteCount: sql<number>`count(${userFavorites.userId})`,
+      })
+      .from(games)
+      .leftJoin(userFavorites, eq(userFavorites.gameId, games.id))
+      .groupBy(games.id, games.name, games.displayName)
+      .orderBy(desc(sql`count(${userFavorites.userId})`), asc(games.name))
+      .limit(limit);
+
+    return rows.map((row) => ({ ...row, favoriteCount: Number(row.favoriteCount) }));
+  }
+
+  async listGames(query: ListGamesQuery): Promise<Paginated<GameView>> {    const conditions: SQL[] = [];
     if (query.q) {
       const pattern = `%${query.q}%`;
       conditions.push(

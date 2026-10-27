@@ -21,6 +21,7 @@ export function toUserSummary(user: User, options: { includeEmail?: boolean } = 
     ratingCount: user.ratingCount,
     ordersCount: user.ordersCount,
     completedOrdersCount: user.completedOrdersCount,
+    onTimeCount: user.onTimeCount,
     totalHours: user.totalHours,
     rankingPoints: user.rankingPoints,
     createdAt: user.createdAt.toISOString(),

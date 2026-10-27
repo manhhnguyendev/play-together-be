@@ -10,6 +10,7 @@ import {
   gt,
   gte,
   ilike,
+  inArray,
   isNull,
   lt,
   lte,
@@ -31,6 +32,7 @@ import {
   gameTypeLinks,
   orders,
   userBlocks,
+  userFavorites,
   userHobbies,
   userImages,
   userSkills,
@@ -40,10 +42,12 @@ import {
 import { toUserSummary } from './user.mapper';
 import { StatsService } from './stats.service';
 import type {
+  AddFavoriteDto,
   AddHobbyDto,
   AddImageDto,
   BlockUserDto,
   CreateAvailabilityDto,
+  FavoriteGameItemDto,
   PlayerModeDto,
   SearchPlayersQuery,
   UpdateProfileDto,
@@ -228,18 +232,18 @@ export class UsersService {
           'Add at least one game skill before enabling player mode',
         );
       }
-
-      const price = dto.pricePerHour ?? user.pricePerHour;
-      if (price < MIN_PRICE_PER_HOUR || price > MAX_PRICE_PER_HOUR) {
-        throw AppError.badRequest(
-          ErrorCode.playerModeRequirements,
-          `pricePerHour must be between ${MIN_PRICE_PER_HOUR} and ${MAX_PRICE_PER_HOUR} VND`,
-        );
-      }
-
-      if (dto.pricePerHour !== undefined) patch.pricePerHour = dto.pricePerHour;
-      if (dto.maxHoursPerHire !== undefined) patch.maxHoursPerHire = dto.maxHoursPerHire;
     }
+
+    const price = dto.pricePerHour ?? user.pricePerHour;
+    if (price < MIN_PRICE_PER_HOUR || price > MAX_PRICE_PER_HOUR) {
+      throw AppError.badRequest(
+        ErrorCode.playerModeRequirements,
+        `pricePerHour must be between ${MIN_PRICE_PER_HOUR} and ${MAX_PRICE_PER_HOUR} VND`,
+      );
+    }
+
+    if (dto.pricePerHour !== undefined) patch.pricePerHour = dto.pricePerHour;
+    if (dto.maxHoursPerHire !== undefined) patch.maxHoursPerHire = dto.maxHoursPerHire;
 
     const [updated] = await this.db.update(users).set(patch).where(eq(users.id, id)).returning();
     return toUserSummary(updated, { includeEmail: true });
@@ -253,6 +257,10 @@ export class UsersService {
       conditions.push(or(ilike(users.name, pattern), ilike(users.city, pattern))!);
     }
     if (query.city) conditions.push(ilike(users.city, `%${query.city}%`));
+    if (query.genders?.length) conditions.push(inArray(users.gender, query.genders));
+    if (query.initial) {
+      conditions.push(sql`lower(${users.name}) like ${`${query.initial.toLowerCase()}%`}`);
+    }
     if (query.status) conditions.push(eq(users.status, query.status));
     if (query.minPrice !== undefined) conditions.push(gte(users.pricePerHour, query.minPrice));
     if (query.maxPrice !== undefined) conditions.push(lte(users.pricePerHour, query.maxPrice));
@@ -328,6 +336,8 @@ export class UsersService {
         ];
       case 'newest':
         return [desc(users.createdAt)];
+      case 'name':
+        return [asc(users.name)];
       case 'ranking':
       default:
         return [desc(users.rankingPoints), desc(users.ratingCount), asc(users.name)];
@@ -398,6 +408,43 @@ export class UsersService {
     await this.db
       .delete(userHobbies)
       .where(and(eq(userHobbies.userId, userId), eq(userHobbies.gameId, gameId)));
+  }
+
+  async listFavorites(userId: string): Promise<FavoriteGameItemDto[]> {
+    const rows = await this.db
+      .select({
+        id: games.id,
+        name: games.name,
+        displayName: games.displayName,
+        favoritedAt: userFavorites.createdAt,
+      })
+      .from(userFavorites)
+      .innerJoin(games, eq(games.id, userFavorites.gameId))
+      .where(eq(userFavorites.userId, userId))
+      .orderBy(desc(userFavorites.createdAt));
+
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      displayName: row.displayName,
+      favoritedAt: row.favoritedAt.toISOString(),
+    }));
+  }
+
+  async addFavorite(userId: string, dto: AddFavoriteDto): Promise<void> {
+    const [game] = await this.db.select({ id: games.id }).from(games).where(eq(games.id, dto.gameId)).limit(1);
+    if (!game) throw AppError.notFound(ErrorCode.gameNotFound, 'Game not found');
+
+    await this.db
+      .insert(userFavorites)
+      .values({ userId, gameId: dto.gameId })
+      .onConflictDoNothing();
+  }
+
+  async removeFavorite(userId: string, gameId: string): Promise<void> {
+    await this.db
+      .delete(userFavorites)
+      .where(and(eq(userFavorites.userId, userId), eq(userFavorites.gameId, gameId)));
   }
 
   async addImage(userId: string, dto: AddImageDto): Promise<{ id: string; url: string }> {

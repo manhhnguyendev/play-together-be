@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
@@ -109,6 +109,26 @@ export class AddHobbyDto {  @ApiProperty({ format: 'uuid' })
   gameId: string;
 }
 
+export class AddFavoriteDto {
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  gameId: string;
+}
+
+export class FavoriteGameItemDto {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty({ nullable: true })
+  displayName: string | null;
+
+  @ApiProperty({ format: 'date-time' })
+  favoritedAt: string;
+}
+
 export class AddImageDto {
   @ApiProperty({ example: 'https://cdn.playtogether.local/me/1.jpg' })
   @IsUrl({ require_tld: false })
@@ -152,7 +172,7 @@ export class BlockUserDto {
   hours?: number;
 }
 
-export const PLAYER_SORTS = ['ranking', 'rating', 'price_asc', 'price_desc', 'newest'] as const;
+export const PLAYER_SORTS = ['ranking', 'rating', 'price_asc', 'price_desc', 'newest', 'name'] as const;
 
 export class SearchPlayersQuery extends PageQueryDto {
   @ApiPropertyOptional({ description: 'Matches name or city' })
@@ -175,6 +195,24 @@ export class SearchPlayersQuery extends PageQueryDto {
   @IsOptional()
   @IsUUID()
   hobbyId?: string;
+
+  @ApiPropertyOptional({ enum: GENDERS, isArray: true, description: 'Repeat or comma-separate to allow several' })
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string'
+      ? value
+          .split(',')
+          .map((entry) => entry.trim().toUpperCase())
+          .filter(Boolean)
+      : value,
+  )
+  @IsIn(GENDERS, { each: true })
+  genders?: Array<(typeof GENDERS)[number]>;
+
+  @ApiPropertyOptional({ description: 'First letter of the player name', example: 'A' })
+  @IsOptional()
+  @Matches(/^[A-Za-z]$/)
+  initial?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -263,6 +301,9 @@ export class UserSummary {
 
   @ApiProperty()
   completedOrdersCount: number;
+
+  @ApiProperty({ description: 'Completed orders that ended within the scheduled window' })
+  onTimeCount: number;
 
   @ApiProperty()
   totalHours: number;

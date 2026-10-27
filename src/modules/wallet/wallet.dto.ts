@@ -57,6 +57,22 @@ export class ListWithdrawalsQuery extends PageQueryDto {
   status?: 'PENDING' | 'PAID' | 'REJECTED' | 'CANCELLED';
 }
 
+export class EarningsSummaryDto {
+  @ApiProperty({ description: 'VND earned today in the app timezone' })
+  today: number;
+
+  @ApiProperty({ description: 'VND earned since the first day of the current month' })
+  thisMonth: number;
+
+  @ApiProperty({ description: 'VND earned since the account was created' })
+  total: number;
+}
+
+export class ReleasePendingCreditsResultDto {
+  @ApiProperty({ description: 'Credits that matured and moved into the available balance' })
+  released: number;
+}
+
 export class ResolveWithdrawalDto {
   @ApiProperty({ enum: ['PAID', 'REJECTED'] })
   @IsIn(['PAID', 'REJECTED'])

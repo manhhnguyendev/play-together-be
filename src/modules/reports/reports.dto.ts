@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { PageMetaDto } from '../../common/openapi/paginated.dto';
 import { PageQueryDto } from '../../common/pagination/pagination';
 
@@ -26,6 +26,11 @@ export class ListReportsQuery extends PageQueryDto {
   @IsOptional()
   @IsIn(REPORT_STATUSES)
   status?: (typeof REPORT_STATUSES)[number];
+
+  @ApiPropertyOptional({ format: 'uuid', description: 'Only reports filed about this order' })
+  @IsOptional()
+  @IsUUID()
+  orderId?: string;
 }
 
 export class ListAdminReportsQuery extends PageQueryDto {

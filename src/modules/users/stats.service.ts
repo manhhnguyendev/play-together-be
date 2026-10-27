@@ -38,7 +38,10 @@ export class StatsService {
       .select({
         total: sql<number>`count(*)`,
         completed: sql<number>`count(*) filter (where ${orders.status} in ${COUNTED_STATUSES})`,
-        fullSessions: sql<number>`count(*) filter (where ${orders.status} = 'COMPLETED')`,
+        onTime: sql<number>`count(*) filter (where ${orders.status} = 'COMPLETED'
+          and ${orders.scheduledEndAt} is not null
+          and ${orders.endedAt} is not null
+          and ${orders.endedAt} <= ${orders.scheduledEndAt})`,
         hours: sql<number>`coalesce(sum(${orders.hours}) filter (where ${orders.status} in ${COUNTED_STATUSES}), 0)`,
       })
       .from(orders)
@@ -56,7 +59,7 @@ export class StatsService {
       ordersCount: Number(orderAgg?.total ?? 0),
       completedOrdersCount: Number(orderAgg?.completed ?? 0),
       totalHours: Number(orderAgg?.hours ?? 0),
-      onTimeCount: Number(orderAgg?.fullSessions ?? 0),
+      onTimeCount: Number(orderAgg?.onTime ?? 0),
     };
 
     const rankingPoints = rankingPointsOf({

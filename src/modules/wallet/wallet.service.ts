@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { and, asc, count, desc, eq, isNull, lte, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
@@ -6,7 +7,7 @@ import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
 import { assertPositiveVnd, splitFee } from '../../common/money/money';
 import { offsetOf, paginated, type Paginated } from '../../common/pagination/pagination';
-import { addHours, Clock } from '../../common/time/time';
+import { addHours, Clock, startOfDayInZone, timeZoneOffsetMs, zonedParts } from '../../common/time/time';
 import {
   deposits,
   escrowHolds,
@@ -19,10 +20,12 @@ import {
 } from '../../db/schema';
 import { MomoAdapter } from './momo.adapter';
 import type {
+  EarningsSummaryDto,
   ListTransactionsQuery,
   ListWithdrawalsQuery,
   MomoIpnDto,
   MyWithdrawalView,
+  ReleasePendingCreditsResultDto,
   RequestWithdrawalDto,
   WalletSummary,
   WithdrawalResolutionDto,
@@ -67,6 +70,7 @@ export class WalletService {
     @Inject(DB) private readonly db: AppDatabase,
     private readonly momo: MomoAdapter,
     private readonly clock: Clock,
+    private readonly config: ConfigService,
   ) {}
 
   async getOrCreateWallet(executor: DbExecutor, userId: string): Promise<Wallet> {
@@ -137,8 +141,44 @@ export class WalletService {
     };
   }
 
-  async listTransactions(userId: string, query: ListTransactionsQuery): Promise<Paginated<unknown>> {
+  async earningsSummary(userId: string): Promise<EarningsSummaryDto> {
     const wallet = await this.getOrCreateWallet(this.db, userId);
+    const now = this.clock.now();
+    const timeZone = this.config.get<string>('APP_TIMEZONE') ?? 'Asia/Ho_Chi_Minh';
+    const offset = timeZoneOffsetMs(now, timeZone);
+    const dayStart = startOfDayInZone(now, timeZone);
+    const parts = zonedParts(now, timeZone);
+    const monthStart = new Date(Date.UTC(parts.year, parts.month - 1, 1, 0, 0, 0, 0) - offset);
+
+    const [row] = await this.db
+      .select({
+        today: sql<number>`coalesce(sum(${ledgerEntries.amount}) filter (where ${ledgerEntries.createdAt} >= ${dayStart}), 0)`,
+        month: sql<number>`coalesce(sum(${ledgerEntries.amount}) filter (where ${ledgerEntries.createdAt} >= ${monthStart}), 0)`,
+        total: sql<number>`coalesce(sum(${ledgerEntries.amount}), 0)`,
+      })
+      .from(ledgerEntries)
+      .where(
+        and(
+          eq(ledgerEntries.walletId, wallet.id),
+          eq(ledgerEntries.type, 'ORDER_EARNING'),
+          eq(ledgerEntries.direction, 'CREDIT'),
+        ),
+      );
+
+    return {
+      today: Number(row?.today ?? 0),
+      thisMonth: Number(row?.month ?? 0),
+      total: Number(row?.total ?? 0),
+    };
+  }
+
+  /** Matures the caller's own credits that have passed their hold period. */
+  async releaseDueCredits(userId: string): Promise<ReleasePendingCreditsResultDto> {
+    const wallet = await this.getOrCreateWallet(this.db, userId);
+    return { released: await this.releaseDuePendingCredits(wallet.id) };
+  }
+
+  async listTransactions(userId: string, query: ListTransactionsQuery): Promise<Paginated<unknown>> {    const wallet = await this.getOrCreateWallet(this.db, userId);
     const where = query.type
       ? and(eq(ledgerEntries.walletId, wallet.id), eq(ledgerEntries.type, query.type))
       : eq(ledgerEntries.walletId, wallet.id);
@@ -820,12 +860,17 @@ export class WalletService {
   }
 
   /** Releases pending earnings whose hold period has elapsed. */
-  async releaseDuePendingCredits(): Promise<number> {
+  async releaseDuePendingCredits(walletId?: string): Promise<number> {
     const now = this.clock.now();
+    const dueFilters = [
+      isNull(pendingCredits.releasedAt),
+      lte(pendingCredits.availableAt, now),
+      ...(walletId ? [eq(pendingCredits.walletId, walletId)] : []),
+    ];
     const due = await this.db
       .select()
       .from(pendingCredits)
-      .where(and(isNull(pendingCredits.releasedAt), lte(pendingCredits.availableAt, now)))
+      .where(and(...dueFilters))
       .limit(200);
 
     let released = 0;

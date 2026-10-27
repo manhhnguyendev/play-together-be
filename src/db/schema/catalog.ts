@@ -100,8 +100,24 @@ export const userHobbies = pgTable(
   (t) => [primaryKey({ columns: [t.userId, t.gameId] }), index('user_hobbies_game_idx').on(t.gameId)],
 );
 
-export const userImages = pgTable(
-  'user_images',
+export const userFavorites = pgTable(
+  'user_favorites',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    gameId: uuid('game_id')
+      .notNull()
+      .references(() => games.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.gameId] }),
+    index('user_favorites_game_idx').on(t.gameId),
+  ],
+);
+
+export const userImages = pgTable(  'user_images',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     userId: uuid('user_id')

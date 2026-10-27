@@ -335,6 +335,42 @@ export class RatingsService {
     return this.map(rating, rater ?? null, ratee ?? null);
   }
 
+  async listForOrder(orderId: string, viewerId: string): Promise<RatingDto[]> {
+    const [order] = await this.db
+      .select({ hirerId: orders.hirerId, playerId: orders.playerId })
+      .from(orders)
+      .where(eq(orders.id, orderId))
+      .limit(1);
+    if (!order) throw AppError.notFound(ErrorCode.orderNotFound, 'Order not found');
+    if (order.hirerId !== viewerId && order.playerId !== viewerId) {
+      throw AppError.forbidden(ErrorCode.orderNotParticipant, 'Only the hirer or the player can read these ratings');
+    }
+
+    const rows = await this.db
+      .select({
+        rating: ratings,
+        raterId: raterTable.id,
+        raterName: raterTable.name,
+        raterAvatar: raterTable.avatarUrl,
+        rateeId: rateeTable.id,
+        rateeName: rateeTable.name,
+        rateeAvatar: rateeTable.avatarUrl,
+      })
+      .from(ratings)
+      .innerJoin(raterTable, eq(raterTable.id, ratings.raterId))
+      .innerJoin(rateeTable, eq(rateeTable.id, ratings.rateeId))
+      .where(eq(ratings.orderId, orderId))
+      .orderBy(desc(ratings.createdAt));
+
+    return rows.map((row) =>
+      this.map(
+        row.rating,
+        { id: row.raterId, name: row.raterName, avatarUrl: row.raterAvatar },
+        { id: row.rateeId, name: row.rateeName, avatarUrl: row.rateeAvatar },
+      ),
+    );
+  }
+
   private map(
     rating: Rating,
     rater: { id: string; name: string; avatarUrl: string | null } | null,

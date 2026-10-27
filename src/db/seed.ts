@@ -13,6 +13,7 @@ import {
   gameTypes,
   ledgerEntries,
   systemConfigs,
+  userFavorites,
   userHobbies,
   userSkills,
   users,
@@ -593,6 +594,10 @@ async function ensureDemoProfiles(
       .map((game) => ({ userId: player.user.id, gameId: game.id, createdAt: now }));
     if (hobbyValues.length) {
       await db.insert(userHobbies).values(hobbyValues).onConflictDoNothing();
+      await db
+        .insert(userFavorites)
+        .values(hobbyValues.map((hobby) => ({ userId: hobby.userId, gameId: hobby.gameId, createdAt: now })))
+        .onConflictDoNothing();
     }
 
     const weekdayEvening = [1, 2, 3, 4, 5].map((day) => ({

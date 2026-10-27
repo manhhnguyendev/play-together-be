@@ -1,6 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, count, desc, eq } from 'drizzle-orm';
 import { DB, type AppDatabase } from '../../common/database/database.module';
+import { AppError } from '../../common/errors/app-error';
+import { ErrorCode } from '../../common/errors/error-codes';
 import { offsetOf, paginated, type Paginated } from '../../common/pagination/pagination';
 import { feedback } from '../../db/schema';
 import type { CreateFeedbackDto, ListMyFeedbackQuery, MyFeedbackView } from './feedback.dto';
@@ -35,6 +37,16 @@ export class FeedbackService {
     ]);
 
     return paginated(rows.map((row) => this.map(row)), total?.value ?? 0, query.page, query.pageSize);
+  }
+
+  async getMine(userId: string, id: string): Promise<MyFeedbackView> {
+    const [row] = await this.db
+      .select()
+      .from(feedback)
+      .where(and(eq(feedback.id, id), eq(feedback.userId, userId)))
+      .limit(1);
+    if (!row) throw AppError.notFound(ErrorCode.notFound, 'Feedback not found');
+    return this.map(row);
   }
 
   private map(row: typeof feedback.$inferSelect): MyFeedbackView {

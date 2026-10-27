@@ -25,3 +25,21 @@ export type SearchHistoryItem = {
   query: string;
   createdAt: string;
 };
+
+export class HotSearchQuery {
+  @ApiPropertyOptional({ default: 10, minimum: 1, maximum: 20 })
+  @Type(() => Number)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  limit: number = 10;
+}
+
+export class HotSearchItemDto {
+  @ApiProperty()
+  query: string;
+
+  @ApiProperty({ description: 'How many times the query was recorded in the trending window' })
+  searches: number;
+}

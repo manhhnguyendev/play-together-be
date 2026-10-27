@@ -124,7 +124,10 @@ export class ReportsService {
   async listMine(userId: string, query: ListReportsQuery): Promise<Paginated<ReportDto>> {
     const scopeFilter =
       query.scope === 'received' ? eq(reports.targetId, userId) : eq(reports.reporterId, userId);
-    const where = query.status ? and(scopeFilter, eq(reports.status, query.status)) : scopeFilter;
+    const filters = [scopeFilter];
+    if (query.status) filters.push(eq(reports.status, query.status));
+    if (query.orderId) filters.push(eq(reports.orderId, query.orderId));
+    const where = and(...filters);
 
     const [rows, [total]] = await Promise.all([
       this.db

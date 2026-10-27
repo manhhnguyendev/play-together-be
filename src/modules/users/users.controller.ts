@@ -15,10 +15,12 @@ import type { AuthUser } from '../../common/security/auth-user';
 import { CurrentUser } from '../../common/security/current-user.decorator';
 import { Public } from '../../common/security/decorators';
 import {
+  AddFavoriteDto,
   AddHobbyDto,
   AddImageDto,
   BlockUserDto,
   CreateAvailabilityDto,
+  FavoriteGameItemDto,
   PlayerModeDto,
   SearchPlayersQuery,
   UpdateProfileDto,
@@ -116,6 +118,33 @@ export class UsersController {
     @Param('gameId', ParseUUIDPipe) gameId: string,
   ): Promise<void> {
     await this.users.removeHobby(user.id, gameId);
+  }
+
+  @ApiBearerAuth()
+  @Get('me/favorites')
+  @ApiOperation({ summary: 'Games I marked as favorites' })
+  @ApiOkResponse({ type: [FavoriteGameItemDto] })
+  favorites(@CurrentUser() user: AuthUser) {
+    return this.users.listFavorites(user.id);
+  }
+
+  @ApiBearerAuth()
+  @Post('me/favorites')
+  @HttpCode(204)
+  @ApiOperation({ summary: 'Add a game to my favorites' })
+  async addFavorite(@CurrentUser() user: AuthUser, @Body() dto: AddFavoriteDto): Promise<void> {
+    await this.users.addFavorite(user.id, dto);
+  }
+
+  @ApiBearerAuth()
+  @Delete('me/favorites/:gameId')
+  @HttpCode(204)
+  @ApiOperation({ summary: 'Remove a game from my favorites' })
+  async removeFavorite(
+    @CurrentUser() user: AuthUser,
+    @Param('gameId', ParseUUIDPipe) gameId: string,
+  ): Promise<void> {
+    await this.users.removeFavorite(user.id, gameId);
   }
 
   @ApiBearerAuth()

@@ -31,13 +31,28 @@ export class ListMyFeedbackQuery extends PageQueryDto {
   status?: (typeof MY_FEEDBACK_STATUSES)[number];
 }
 
-export type MyFeedbackView = {
+export class MyFeedbackView {
+  @ApiProperty({ format: 'uuid' })
   id: string;
+
+  @ApiProperty()
   title: string;
+
+  @ApiProperty()
   message: string;
+
+  @ApiProperty({ enum: FEEDBACK_TYPES })
   type: (typeof FEEDBACK_TYPES)[number];
+
+  @ApiProperty({ enum: MY_FEEDBACK_STATUSES })
   status: (typeof MY_FEEDBACK_STATUSES)[number];
+
+  @ApiProperty({ nullable: true })
   adminNote: string | null;
+
+  @ApiProperty({ format: 'date-time', nullable: true })
   resolvedAt: string | null;
+
+  @ApiProperty({ format: 'date-time' })
   createdAt: string;
-};
+}

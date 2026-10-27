@@ -28,6 +28,30 @@ export class ListGamesQuery extends PageQueryDto {
   gameTypeId?: string;
 }
 
+export class MostFavoritesQuery {
+  @ApiPropertyOptional({ default: 8, minimum: 1, maximum: 20 })
+  @Type(() => Number)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  limit: number = 8;
+}
+
+export class FavoriteGameDto {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty({ nullable: true })
+  displayName: string | null;
+
+  @ApiProperty({ description: 'How many players marked this game as a favorite' })
+  favoriteCount: number;
+}
+
 export class ListGameTypesQuery extends PageQueryDto {
   @ApiPropertyOptional()
   @IsOptional()

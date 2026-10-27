@@ -210,13 +210,14 @@ Access: **Public** = no token, **Auth** = any signed-in user, **Admin** = `ADMIN
 
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
-| GET | `/users` | Public | Search players (game, city, price, status, sort) |
+| GET | `/users` | Public | Search players (`q`, `gameId`/`hobbyId`, `genders`, `initial`, city, price, status, `minRating`, `sort`) |
 | GET | `/users/me` | Auth | Full profile |
 | PATCH | `/users/me` | Auth | Update name, bio, city, avatar, etc. |
 | PATCH | `/users/me/status` | Auth | Set presence `ONLINE` / `OFFLINE` |
-| PATCH | `/users/me/player-mode` | Auth | Enable/disable accepting hires |
+| PATCH | `/users/me/player-mode` | Auth | Enable/disable accepting hires; price and max hours save either way |
 | POST/PATCH/DELETE | `/users/me/skills...` | Auth | Manage offered games, price and rank |
 | POST/DELETE | `/users/me/hobbies...` | Auth | Manage hobbies (recommendation signals) |
+| GET/POST/DELETE | `/users/me/favorites...` | Auth | Favorite games (idempotent add, remove by game id) |
 | POST/DELETE | `/users/me/images...` | Auth | Manage gallery image URLs |
 | GET/POST/DELETE | `/users/me/availability...` | Auth | Weekly availability windows |
 | GET/POST/DELETE | `/users/me/blocks...` | Auth | Blocked users |
@@ -231,6 +232,7 @@ Access: **Public** = no token, **Auth** = any signed-in user, **Admin** = `ADMIN
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
 | GET | `/games`, `/games/:id`, `/games/:id/ranks` | Public | Games and ranks |
+| GET | `/games/most-favorited` | Public | Games ranked by favorite count |
 | GET | `/game-types`, `/game-types/:id` | Public | Genres |
 | GET/POST/PATCH/DELETE | `/admin/games...`, `/admin/games/:id/ranks`, `/admin/ranks/:id`, `/admin/game-types...` | Admin | Catalog management |
 
@@ -248,6 +250,7 @@ Access: **Public** = no token, **Auth** = any signed-in user, **Admin** = `ADMIN
 | POST | `/orders/:id/cancel` | Hirer | Cancel a pending request |
 | POST | `/orders/:id/complete` | Participant | Settle a session that reached its scheduled end |
 | POST | `/orders/:id/end-early` | Participant | Stop early (minimum 10% elapsed) |
+| GET | `/orders/:id/ratings` | Participant | Ratings attached to one order |
 
 ### Wallet and payments
 
@@ -255,6 +258,8 @@ Access: **Public** = no token, **Auth** = any signed-in user, **Admin** = `ADMIN
 | --- | --- | --- | --- |
 | GET | `/wallet` | Auth | Available / pending balances and upcoming releases |
 | GET | `/wallet/transactions` | Auth | Ledger entries |
+| GET | `/wallet/earnings/summary` | Auth | Earnings today / this month / total |
+| POST | `/wallet/pending-credits/release` | Auth | Release matured pending credits now |
 | GET/POST | `/wallet/deposits` | Auth | List top-ups / start a MoMo top-up |
 | POST | `/wallet/deposits/:id/confirm` | Auth | Confirm a top-up in mock mode |
 | GET/POST | `/wallet/withdrawals` | Auth | List / request withdrawals |
@@ -269,7 +274,7 @@ Access: **Public** = no token, **Auth** = any signed-in user, **Admin** = `ADMIN
 | POST | `/orders/:id/reports` | Participant | Report the other party once per order |
 | GET | `/users/:id/ratings`, `/users/:id/ratings/summary` | Public | Reviews and aggregates |
 | POST | `/ratings/:id/flag` | Auth | Flag a review |
-| GET | `/reports/mine`, `/reports/:id` | Auth | My reports / one report |
+| GET | `/reports/mine`, `/reports/:id` | Auth | My reports (`scope=submitted\|received`, optional `orderId`) / one report |
 | GET/PATCH | `/admin/reports...` | Admin | Queue and decisions |
 | GET/PATCH | `/admin/ratings...` | Admin | Flagged reviews and violations |
 
@@ -298,7 +303,9 @@ Access: **Public** = no token, **Auth** = any signed-in user, **Admin** = `ADMIN
 | GET | `/notifications`, `/notifications/unread-count` | Auth | Notifications |
 | PATCH | `/notifications/:id/read`, `POST /notifications/read-all`, `DELETE /notifications/read` | Auth | Read state |
 | POST/GET | `/feedback`, `/feedback/mine` | Auth | Send and track feedback |
+| GET | `/feedback/:id` | Owner | One feedback item (404 for anyone else) |
 | GET/POST/DELETE | `/search-history...` | Auth | Search history |
+| GET | `/search-history/hot` | Public | Trending searches, aggregated per distinct user |
 | GET | `/recommendations/players` | Auth | Content-based player suggestions |
 | GET | `/configs` | Public | Public runtime configuration |
 | GET/POST/PATCH/DELETE | `/admin/configs...` | Admin | System configuration |
