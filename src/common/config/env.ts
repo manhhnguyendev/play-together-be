@@ -1,6 +1,6 @@
 export type NodeEnv = 'development' | 'test' | 'production';
 
-const REQUIRED_IN_PRODUCTION = ['DATABASE_URL', 'JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'];
+const REQUIRED_IN_PRODUCTION = ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'];
 
 export function validateEnv(raw: Record<string, unknown>): Record<string, unknown> {
   const env = { ...raw };
@@ -34,6 +34,9 @@ export function validateEnv(raw: Record<string, unknown>): Record<string, unknow
   const accessSecret = String(env.JWT_ACCESS_SECRET ?? '');
   const refreshSecret = String(env.JWT_REFRESH_SECRET ?? '');
   if (nodeEnv === 'production') {
+    if (env.DATABASE_DRIVER === 'postgres' && !env.DATABASE_URL) {
+      throw new Error('DATABASE_URL is required when DATABASE_DRIVER=postgres');
+    }
     for (const key of REQUIRED_IN_PRODUCTION) {
       if (!env[key]) throw new Error(`Missing required environment variable ${key}`);
     }

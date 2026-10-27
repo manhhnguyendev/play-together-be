@@ -59,7 +59,7 @@ npm run start:dev
 ### Using a real PostgreSQL server
 
 ```bash
-docker compose up -d          # PostgreSQL 17 on localhost:5432
+docker compose up -d postgres   # PostgreSQL 17 on localhost:5432
 
 # .env
 DATABASE_DRIVER=postgres
@@ -68,12 +68,48 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/playtogether
 npm run db:migrate && npm run db:seed && npm run start:dev
 ```
 
-Production build:
+### Production build
 
 ```bash
 npm run build
 npm run start:prod            # runs dist/main.js
 ```
+
+### Docker
+
+The image is a two-stage build (compile, then a slim runtime) and runs as the unprivileged `node`
+user. It enables migrations with `AUTO_MIGRATE=true` and ships a `HEALTHCHECK` on `/health`.
+
+```bash
+docker build -t play-together-be .
+
+# Embedded PGlite, persisted in a named volume
+docker run -d --name api -p 3000:3000 \
+  -e NODE_ENV=production \
+  -e AUTO_MIGRATE=true \
+  -e JWT_ACCESS_SECRET=change-me-access-secret-at-least-32-chars \
+  -e JWT_REFRESH_SECRET=change-me-refresh-secret-at-least-32-chars \
+  -v pt-data:/app/.data \
+  play-together-be
+
+# Or the whole stack (API + PostgreSQL 17)
+docker compose up --build
+```
+
+- Without `AUTO_MIGRATE=true`, apply migrations first: `docker compose exec api node dist/db/migrate-cli.js`.
+- Seed demo data inside the container: `docker compose exec api node dist/db/seed-cli.js`.
+- PGlite writes to `/app/.data/pgdata`; always mount a volume there or the database dies with the
+  container. `docker compose up -d postgres` still starts only the database for local development.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on pushes to `main` and on every pull request:
+
+1. `npm ci`, `npm run typecheck`, `npm run build`.
+2. Unit tests (`npm test`) and end-to-end tests (`npm run test:e2e`, in-memory PGlite).
+3. Docker image build, then boots the container and waits until `GET /api/v2/health` succeeds.
+
+No external database service is needed: both the e2e suite and the image smoke test use PGlite.
 
 ---
 

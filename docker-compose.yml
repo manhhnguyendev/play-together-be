@@ -16,5 +16,24 @@ services:
       timeout: 5s
       retries: 10
 
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_DRIVER: postgres
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/playtogether
+      AUTO_MIGRATE: 'true'
+      # Replace these with real 32+ character secrets outside local demos.
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-local-compose-access-secret-change-me}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-local-compose-refresh-secret-change-me}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   pgdata:

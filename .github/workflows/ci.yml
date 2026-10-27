@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test -- --runInBand
+      - run: npm run test:e2e
+
+  docker:
+    name: Build and smoke-test the image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: play-together-be:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Boot the container and probe /health
+        run: |
+          docker run -d --name api \
+            -e NODE_ENV=production \
+            -e AUTO_MIGRATE=true \
+            -e JOBS_ENABLED=false \
+            -e JWT_ACCESS_SECRET=ci-access-secret-ci-access-secret-1234 \
+            -e JWT_REFRESH_SECRET=ci-refresh-secret-ci-refresh-secret-12 \
+            -p 3000:3000 play-together-be:ci
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/api/v2/health > /dev/null; then
+              echo "API healthy after ${attempt} attempt(s)"
+              curl -fsS http://localhost:3000/api/v2/health
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "API did not become healthy in time"
+          docker logs api
+          exit 1
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs api || true
