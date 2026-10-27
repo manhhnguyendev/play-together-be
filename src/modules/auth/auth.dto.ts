@@ -1,7 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsDateString, IsEmail, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
-import type { UserSummary } from '../users/users.dto';
-
+import { UserSummary } from '../users/users.dto';
 const PASSWORD_RULE = /^(?=.*[A-Za-z])(?=.*\d).+$/;
 
 export class RegisterDto {
@@ -105,17 +104,26 @@ export class GoogleLoginDto {
 }
 
 export class TokenPairDto {
+  @ApiProperty()
   accessToken: string;
+
+  @ApiProperty()
   refreshToken: string;
+
+  @ApiProperty({ description: 'Access token lifetime in seconds', example: 900 })
   accessTokenExpiresIn: number;
+
+  @ApiProperty({ format: 'date-time' })
   refreshTokenExpiresAt: string;
 }
 
 export class AuthResponseDto extends TokenPairDto {
+  @ApiProperty({ type: UserSummary })
   user: UserSummary;
 }
 
 export class ForgotPasswordResponseDto {
+  @ApiProperty()
   message: string;
 
   @ApiPropertyOptional({ description: 'Only present when EXPOSE_RESET_TOKEN is enabled (development)' })

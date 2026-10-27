@@ -12,6 +12,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { PageMetaDto } from '../../common/openapi/paginated.dto';
 import { PageQueryDto } from '../../common/pagination/pagination';
 
 export class ListGamesQuery extends PageQueryDto {
@@ -101,3 +102,109 @@ export class CreateRankDto {
 }
 
 export class UpdateRankDto extends PartialType(CreateRankDto) {}
+
+export class GameTypeRefDto {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty({ nullable: true })
+  shortName: string | null;
+}
+
+export class GameRowDto {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty({ nullable: true })
+  displayName: string | null;
+
+  @ApiProperty({ nullable: true, description: 'Comma separated aliases' })
+  otherNames: string | null;
+
+  @ApiProperty({ type: String, format: 'date-time' })
+  createdAt: Date;
+
+  @ApiProperty({ type: String, format: 'date-time' })
+  updatedAt: Date;
+}
+
+export class GameView extends GameRowDto {
+  @ApiProperty({ type: [GameTypeRefDto] })
+  types: GameTypeRefDto[];
+}
+
+export class GameRankDto {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty()
+  no: number;
+
+  @ApiProperty()
+  name: string;
+}
+
+export class GameRankRowDto extends GameRankDto {
+  @ApiProperty({ format: 'uuid' })
+  gameId: string;
+
+  @ApiProperty({ type: String, format: 'date-time' })
+  createdAt: Date;
+}
+
+export class GameDetail extends GameView {
+  @ApiProperty({ type: [GameRankDto] })
+  ranks: GameRankDto[];
+}
+
+export class GameTypeRowDto {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty({ nullable: true })
+  shortName: string | null;
+
+  @ApiProperty({ nullable: true })
+  description: string | null;
+
+  @ApiProperty({ type: String, format: 'date-time' })
+  createdAt: Date;
+
+  @ApiProperty({ type: String, format: 'date-time' })
+  updatedAt: Date;
+}
+
+export class GameTypeView extends GameTypeRowDto {
+  @ApiProperty()
+  gameCount: number;
+}
+
+export class GameTypeDetail extends GameTypeView {
+  @ApiProperty({ type: [GameRowDto] })
+  games: GameRowDto[];
+}
+
+export class GamePage {
+  @ApiProperty({ type: [GameView] })
+  items: GameView[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
+}
+
+export class GameTypePage {
+  @ApiProperty({ type: [GameTypeView] })
+  items: GameTypeView[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
+}

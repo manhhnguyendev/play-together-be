@@ -5,7 +5,15 @@ import {
   HttpCode,
   Post,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiAcceptedResponse,
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiNoContentResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { AuthUser } from '../../common/security/auth-user';
 import { CurrentUser } from '../../common/security/current-user.decorator';
@@ -37,6 +45,7 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('register')
   @ApiOperation({ summary: 'Create a player account' })
+  @ApiCreatedResponse({ type: AuthResponseDto })
   register(@Body() dto: RegisterDto, @Headers('user-agent') userAgent?: string): Promise<AuthResponseDto> {
     return this.auth.register(dto, userAgent);
   }
@@ -46,6 +55,7 @@ export class AuthController {
   @Post('login')
   @HttpCode(200)
   @ApiOperation({ summary: 'Sign in with email and password' })
+  @ApiOkResponse({ type: AuthResponseDto })
   login(@Body() dto: LoginDto, @Headers('user-agent') userAgent?: string): Promise<AuthResponseDto> {
     return this.auth.login(dto, userAgent);
   }
@@ -54,6 +64,7 @@ export class AuthController {
   @Post('refresh')
   @HttpCode(200)
   @ApiOperation({ summary: 'Rotate a refresh token into a new token pair' })
+  @ApiOkResponse({ type: TokenPairDto })
   refresh(@Body() dto: RefreshTokenDto, @Headers('user-agent') userAgent?: string): Promise<TokenPairDto> {
     return this.auth.refresh(dto.refreshToken, userAgent);
   }
@@ -62,6 +73,7 @@ export class AuthController {
   @Post('logout')
   @HttpCode(204)
   @ApiOperation({ summary: 'Revoke a refresh token' })
+  @ApiNoContentResponse()
   async logout(@Body() dto: RefreshTokenDto): Promise<void> {
     await this.auth.logout(dto.refreshToken);
   }
@@ -70,6 +82,7 @@ export class AuthController {
   @Post('google')
   @HttpCode(200)
   @ApiOperation({ summary: 'Sign in (or sign up) with a Google ID token' })
+  @ApiOkResponse({ type: AuthResponseDto })
   async googleLogin(
     @Body() dto: GoogleLoginDto,
     @Headers('user-agent') userAgent?: string,
@@ -82,6 +95,7 @@ export class AuthController {
   @Post('password/change')
   @HttpCode(200)
   @ApiOperation({ summary: 'Change my password (all sessions are rotated)' })
+  @ApiOkResponse({ type: AuthResponseDto })
   changePassword(
     @CurrentUser() user: AuthUser,
     @Body() dto: ChangePasswordDto,
@@ -95,6 +109,7 @@ export class AuthController {
   @Post('password/forgot')
   @HttpCode(202)
   @ApiOperation({ summary: 'Request a password reset token' })
+  @ApiAcceptedResponse({ type: ForgotPasswordResponseDto })
   forgotPassword(@Body() dto: ForgotPasswordDto): Promise<ForgotPasswordResponseDto> {
     return this.auth.forgotPassword(dto.email);
   }
@@ -103,6 +118,7 @@ export class AuthController {
   @Post('password/reset')
   @HttpCode(204)
   @ApiOperation({ summary: 'Reset a password with a reset token' })
+  @ApiNoContentResponse()
   async resetPassword(@Body() dto: ResetPasswordDto): Promise<void> {
     await this.auth.resetPassword(dto);
   }

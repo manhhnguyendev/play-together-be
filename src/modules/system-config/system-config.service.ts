@@ -65,14 +65,7 @@ export class SystemConfigService {
     }
 
     for (const row of rows) {
-      merged.set(row.key, {
-        id: row.id,
-        key: row.key,
-        title: row.title,
-        value: row.value,
-        description: row.description,
-        updatedAt: row.updatedAt.toISOString(),
-      });
+      merged.set(row.key, this.toResolved(row));
     }
 
     return [...merged.values()].sort((a, b) => a.key.localeCompare(b.key));
@@ -91,7 +84,7 @@ export class SystemConfigService {
     };
   }
 
-  async create(dto: CreateConfigDto): Promise<SystemConfig> {
+  async create(dto: CreateConfigDto): Promise<ResolvedConfigDto> {
     const [existing] = await this.db
       .select({ id: systemConfigs.id })
       .from(systemConfigs)
@@ -114,10 +107,10 @@ export class SystemConfigService {
       .returning();
 
     this.invalidate();
-    return created;
+    return this.toResolved(created);
   }
 
-  async update(id: string, dto: UpdateConfigDto): Promise<SystemConfig> {
+  async update(id: string, dto: UpdateConfigDto): Promise<ResolvedConfigDto> {
     await this.requireById(id);
 
     const patch: Partial<typeof systemConfigs.$inferInsert> = { updatedAt: this.clock.now() };
@@ -129,7 +122,7 @@ export class SystemConfigService {
 
     const [updated] = await this.db.update(systemConfigs).set(patch).where(eq(systemConfigs.id, id)).returning();
     this.invalidate();
-    return updated;
+    return this.toResolved(updated);
   }
 
   async remove(id: string): Promise<void> {
@@ -144,6 +137,17 @@ export class SystemConfigService {
   invalidate(): void {
     this.cache = null;
     this.cachedAt = 0;
+  }
+
+  private toResolved(row: SystemConfig): ResolvedConfigDto {
+    return {
+      id: row.id,
+      key: row.key,
+      title: row.title,
+      value: row.value,
+      description: row.description,
+      updatedAt: row.updatedAt.toISOString(),
+    };
   }
 
   private async requireById(id: string): Promise<SystemConfig> {

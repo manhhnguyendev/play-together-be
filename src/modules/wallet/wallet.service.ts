@@ -22,8 +22,11 @@ import type {
   ListTransactionsQuery,
   ListWithdrawalsQuery,
   MomoIpnDto,
+  MyWithdrawalView,
   RequestWithdrawalDto,
   WalletSummary,
+  WithdrawalResolutionDto,
+  WithdrawalView,
 } from './wallet.dto';
 
 export type LedgerEntryInput = {
@@ -197,7 +200,7 @@ export class WalletService {
     );
   }
 
-  async listWithdrawals(userId: string, query: ListWithdrawalsQuery): Promise<Paginated<unknown>> {
+  async listWithdrawals(userId: string, query: ListWithdrawalsQuery): Promise<Paginated<MyWithdrawalView>> {
     const where = query.status
       ? and(eq(withdrawals.userId, userId), eq(withdrawals.status, query.status))
       : eq(withdrawals.userId, userId);
@@ -419,7 +422,7 @@ export class WalletService {
     });
   }
 
-  async adminListWithdrawals(query: ListWithdrawalsQuery): Promise<Paginated<unknown>> {
+  async adminListWithdrawals(query: ListWithdrawalsQuery): Promise<Paginated<WithdrawalView>> {
     const where = query.status ? eq(withdrawals.status, query.status) : undefined;
 
     const [rows, [total]] = await Promise.all([
@@ -454,7 +457,7 @@ export class WalletService {
     id: string,
     status: 'PAID' | 'REJECTED',
     note?: string,
-  ): Promise<{ id: string; status: string }> {
+  ): Promise<WithdrawalResolutionDto> {
     return this.db.transaction(async (tx) => {
       const [withdrawal] = await tx.select().from(withdrawals).where(eq(withdrawals.id, id)).for('update');
       if (!withdrawal) throw AppError.notFound(ErrorCode.withdrawalNotFound, 'Withdrawal not found');

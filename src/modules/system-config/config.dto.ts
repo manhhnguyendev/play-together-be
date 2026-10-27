@@ -37,11 +37,22 @@ export class CreateConfigDto {
 export class UpdateConfigDto extends PartialType(CreateConfigDto) {}
 
 export class ResolvedConfigDto {
+  @ApiProperty({ format: 'uuid', nullable: true, description: 'Null when the value comes from defaults' })
   id: string | null;
+
+  @ApiProperty()
   key: string;
+
+  @ApiProperty()
   title: string;
+
+  @ApiProperty()
   value: number;
+
+  @ApiProperty({ nullable: true })
   description: string | null;
+
+  @ApiProperty({ format: 'date-time' })
   updatedAt: string;
 }
 

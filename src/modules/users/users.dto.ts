@@ -212,28 +212,67 @@ export class SearchPlayersQuery extends PageQueryDto {
   sort?: (typeof PLAYER_SORTS)[number] = 'ranking';
 }
 
-export type UserSummary = {
+export class UserSummary {
+  @ApiProperty({ format: 'uuid' })
   id: string;
+
+  @ApiProperty()
   name: string;
+
+  @ApiPropertyOptional({ description: 'Only exposed to the account owner and administrators' })
   email?: string;
+
+  @ApiPropertyOptional({ nullable: true })
   avatarUrl: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
   city: string | null;
+
+  @ApiProperty({ enum: GENDERS })
   gender: 'MALE' | 'FEMALE' | 'OTHER';
+
+  @ApiPropertyOptional({ nullable: true })
   bio: string | null;
+
+  @ApiProperty({ enum: ['ONLINE', 'OFFLINE', 'BUSY', 'MAINTAIN'] })
   status: 'ONLINE' | 'OFFLINE' | 'BUSY' | 'MAINTAIN';
+
+  @ApiProperty({ enum: ['USER', 'ADMIN', 'CHARITY'] })
   role: 'USER' | 'ADMIN' | 'CHARITY';
+
+  @ApiProperty()
   isActive: boolean;
+
+  @ApiProperty()
   isPlayer: boolean;
+
+  @ApiProperty({ description: 'VND per hour' })
   pricePerHour: number;
+
+  @ApiProperty()
   maxHoursPerHire: number;
+
+  @ApiProperty()
   rating: number;
+
+  @ApiProperty()
   ratingCount: number;
+
+  @ApiProperty()
   ordersCount: number;
+
+  @ApiProperty()
   completedOrdersCount: number;
+
+  @ApiProperty()
   totalHours: number;
+
+  @ApiProperty()
   rankingPoints: number;
+
+  @ApiProperty({ format: 'date-time' })
   createdAt: string;
-};
+}
 
 export type UserProfile = UserSummary & {
   dateOfBirth: string | null;

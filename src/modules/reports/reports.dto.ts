@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { PageMetaDto } from '../../common/openapi/paginated.dto';
 import { PageQueryDto } from '../../common/pagination/pagination';
 
 export const REPORT_STATUSES = ['PENDING', 'APPROVED', 'REJECTED'] as const;
@@ -80,20 +81,50 @@ export class ResolveReportDto {
   refundAmount?: number;
 }
 
-export type ReportParty = {
+export class ReportParty {
+  @ApiProperty({ format: 'uuid' })
   id: string;
-  name: string;
-  avatarUrl: string | null;
-};
 
-export type ReportDto = {
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty({ nullable: true })
+  avatarUrl: string | null;
+}
+
+export class ReportDto {
+  @ApiProperty({ format: 'uuid' })
   id: string;
+
+  @ApiProperty({ format: 'uuid' })
   orderId: string;
+
+  @ApiProperty({ type: ReportParty, nullable: true })
   reporter: ReportParty | null;
+
+  @ApiProperty({ type: ReportParty, nullable: true })
   target: ReportParty | null;
+
+  @ApiProperty()
   message: string;
+
+  @ApiProperty({ enum: REPORT_STATUSES })
   status: (typeof REPORT_STATUSES)[number];
+
+  @ApiProperty({ nullable: true })
   resolutionNote: string | null;
+
+  @ApiProperty({ format: 'date-time', nullable: true })
   resolvedAt: string | null;
+
+  @ApiProperty({ format: 'date-time' })
   createdAt: string;
-};
+}
+
+export class ReportPage {
+  @ApiProperty({ type: [ReportDto] })
+  items: ReportDto[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
+}

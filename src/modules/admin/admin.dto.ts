@@ -11,7 +11,9 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { PageMetaDto } from '../../common/openapi/paginated.dto';
 import { PageQueryDto } from '../../common/pagination/pagination';
+import { UserSummary } from '../users/users.dto';
 
 export const ADMIN_USER_ROLES = ['USER', 'ADMIN', 'CHARITY'] as const;
 export const ADMIN_USER_STATUSES = ['ONLINE', 'OFFLINE', 'BUSY', 'MAINTAIN'] as const;
@@ -136,32 +138,170 @@ export class AdjustBehaviorDto {
   note?: string;
 }
 
-export type AdminFeedbackView = {
+export class AdminFeedbackAuthorDto {
+  @ApiProperty({ format: 'uuid' })
   id: string;
-  userId: string;
-  author: { id: string; name: string; email: string } | null;
-  title: string;
-  message: string;
-  type: 'BUG' | 'FEATURE' | 'COMPLAINT' | 'OTHER';
-  status: (typeof FEEDBACK_STATUSES)[number];
-  adminNote: string | null;
-  resolvedAt: string | null;
-  createdAt: string;
-};
 
-export type PlatformOverview = {
-  users: { total: number; active: number; players: number; charities: number; admins: number };
-  orders: { total: number; byStatus: Record<string, number>; active: number; completed: number };
-  money: {
-    platformFees: number;
-    escrowHeld: number;
-    donations: number;
-    pendingUserWithdrawals: number;
-    pendingCharityWithdrawals: number;
-  };
-  moderation: {
-    pendingReports: number;
-    pendingFeedback: number;
-    flaggedRatings: number;
-  };
-};
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty({ format: 'email' })
+  email: string;
+}
+
+export class AdminFeedbackView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ format: 'uuid' })
+  userId: string;
+
+  @ApiProperty({ type: AdminFeedbackAuthorDto, nullable: true })
+  author: AdminFeedbackAuthorDto | null;
+
+  @ApiProperty()
+  title: string;
+
+  @ApiProperty()
+  message: string;
+
+  @ApiProperty({ enum: ['BUG', 'FEATURE', 'COMPLAINT', 'OTHER'] })
+  type: 'BUG' | 'FEATURE' | 'COMPLAINT' | 'OTHER';
+
+  @ApiProperty({ enum: FEEDBACK_STATUSES })
+  status: (typeof FEEDBACK_STATUSES)[number];
+
+  @ApiProperty({ nullable: true })
+  adminNote: string | null;
+
+  @ApiProperty({ format: 'date-time', nullable: true })
+  resolvedAt: string | null;
+
+  @ApiProperty({ format: 'date-time' })
+  createdAt: string;
+}
+
+class PlatformUserStats {
+  @ApiProperty()
+  total: number;
+
+  @ApiProperty()
+  active: number;
+
+  @ApiProperty()
+  players: number;
+
+  @ApiProperty()
+  charities: number;
+
+  @ApiProperty()
+  admins: number;
+}
+
+class PlatformOrderStats {
+  @ApiProperty()
+  total: number;
+
+  @ApiProperty({ type: 'object', additionalProperties: { type: 'number' } })
+  byStatus: Record<string, number>;
+
+  @ApiProperty()
+  active: number;
+
+  @ApiProperty()
+  completed: number;
+}
+
+class PlatformMoneyStats {
+  @ApiProperty()
+  platformFees: number;
+
+  @ApiProperty()
+  escrowHeld: number;
+
+  @ApiProperty()
+  donations: number;
+
+  @ApiProperty()
+  pendingUserWithdrawals: number;
+
+  @ApiProperty()
+  pendingCharityWithdrawals: number;
+}
+
+class PlatformModerationStats {
+  @ApiProperty()
+  pendingReports: number;
+
+  @ApiProperty()
+  pendingFeedback: number;
+
+  @ApiProperty()
+  flaggedRatings: number;
+}
+
+export class PlatformOverview {
+  @ApiProperty({ type: PlatformUserStats })
+  users: PlatformUserStats;
+
+  @ApiProperty({ type: PlatformOrderStats })
+  orders: PlatformOrderStats;
+
+  @ApiProperty({ type: PlatformMoneyStats })
+  money: PlatformMoneyStats;
+
+  @ApiProperty({ type: PlatformModerationStats })
+  moderation: PlatformModerationStats;
+}
+
+export class BehaviorAdjustmentDto {
+  @ApiProperty({ format: 'uuid' })
+  userId: string;
+
+  @ApiProperty()
+  ratingSum: number;
+
+  @ApiProperty()
+  ratingCount: number;
+
+  @ApiProperty()
+  ordersCount: number;
+
+  @ApiProperty()
+  completedOrdersCount: number;
+
+  @ApiProperty()
+  totalHours: number;
+
+  @ApiProperty()
+  onTimeCount: number;
+
+  @ApiProperty()
+  rankingPoints: number;
+}
+
+export class BroadcastResultDto {
+  @ApiProperty({ description: 'Number of users who received the notification' })
+  recipients: number;
+}
+
+export class MaintenanceStateDto {
+  @ApiProperty()
+  enabled: boolean;
+}
+
+export class AdminUsersPage {
+  @ApiProperty({ type: [UserSummary] })
+  items: UserSummary[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
+}
+
+export class AdminFeedbackPage {
+  @ApiProperty({ type: [AdminFeedbackView] })
+  items: AdminFeedbackView[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
+}

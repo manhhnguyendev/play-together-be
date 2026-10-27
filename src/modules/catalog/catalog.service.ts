@@ -19,15 +19,15 @@ import type {
   CreateGameDto,
   CreateGameTypeDto,
   CreateRankDto,
+  GameDetail,
+  GameTypeDetail,
+  GameTypeView,
+  GameView,
   ListGamesQuery,
   UpdateGameDto,
   UpdateGameTypeDto,
   UpdateRankDto,
 } from './catalog.dto';
-
-export type GameView = Game & { types: Array<{ id: string; name: string; shortName: string | null }> };
-export type GameDetail = GameView & { ranks: Array<{ id: string; no: number; name: string }> };
-export type GameTypeView = GameType & { gameCount: number };
 
 @Injectable()
 export class CatalogService {
@@ -203,7 +203,7 @@ export class CatalogService {
     );
   }
 
-  async getGameType(id: string): Promise<GameTypeView & { games: Game[] }> {
+  async getGameType(id: string): Promise<GameTypeDetail> {
     const [row] = await this.db.select().from(gameTypes).where(eq(gameTypes.id, id)).limit(1);
     if (!row) throw AppError.notFound(ErrorCode.gameTypeNotFound, 'Game type not found');
 
@@ -217,7 +217,7 @@ export class CatalogService {
     return { ...row, gameCount: linked.length, games: linked.map((item) => item.game) };
   }
 
-  async createGameType(dto: CreateGameTypeDto): Promise<GameType> {
+  async createGameType(dto: CreateGameTypeDto): Promise<GameTypeView> {
     const [created] = await this.db
       .insert(gameTypes)
       .values({
@@ -226,10 +226,10 @@ export class CatalogService {
         description: dto.description ?? null,
       })
       .returning();
-    return created;
+    return { ...created, gameCount: 0 };
   }
 
-  async updateGameType(id: string, dto: UpdateGameTypeDto): Promise<GameType> {
+  async updateGameType(id: string, dto: UpdateGameTypeDto): Promise<GameTypeView> {
     const [existing] = await this.db.select().from(gameTypes).where(eq(gameTypes.id, id)).limit(1);
     if (!existing) throw AppError.notFound(ErrorCode.gameTypeNotFound, 'Game type not found');
 
@@ -239,7 +239,7 @@ export class CatalogService {
     if (dto.description !== undefined) patch.description = dto.description;
 
     const [updated] = await this.db.update(gameTypes).set(patch).where(eq(gameTypes.id, id)).returning();
-    return updated;
+    return this.getGameType(updated.id);
   }
 
   async removeGameType(id: string): Promise<void> {

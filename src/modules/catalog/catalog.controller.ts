@@ -1,8 +1,19 @@
 import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Paginated } from '../../common/pagination/pagination';
 import { Public } from '../../common/security/decorators';
 import { CatalogService } from './catalog.service';
-import { ListGamesQuery, ListGameTypesQuery } from './catalog.dto';
+import {
+  GameDetail,
+  GamePage,
+  GameRankDto,
+  GameTypeDetail,
+  GameTypePage,
+  GameTypeView,
+  GameView,
+  ListGamesQuery,
+  ListGameTypesQuery,
+} from './catalog.dto';
 
 @ApiTags('catalog')
 @Controller()
@@ -12,35 +23,40 @@ export class CatalogController {
   @Public()
   @Get('games')
   @ApiOperation({ summary: 'List games' })
-  listGames(@Query() query: ListGamesQuery) {
+  @ApiOkResponse({ type: GamePage })
+  listGames(@Query() query: ListGamesQuery): Promise<Paginated<GameView>> {
     return this.catalog.listGames(query);
   }
 
   @Public()
   @Get('games/:id')
   @ApiOperation({ summary: 'Game detail with ranks and types' })
-  getGame(@Param('id', ParseUUIDPipe) id: string) {
+  @ApiOkResponse({ type: GameDetail })
+  getGame(@Param('id', ParseUUIDPipe) id: string): Promise<GameDetail> {
     return this.catalog.getGame(id);
   }
 
   @Public()
   @Get('games/:id/ranks')
   @ApiOperation({ summary: 'Ranks of a game' })
-  listRanks(@Param('id', ParseUUIDPipe) id: string) {
+  @ApiOkResponse({ type: [GameRankDto] })
+  listRanks(@Param('id', ParseUUIDPipe) id: string): Promise<GameRankDto[]> {
     return this.catalog.listRanks(id);
   }
 
   @Public()
   @Get('game-types')
   @ApiOperation({ summary: 'List game types' })
-  listGameTypes(@Query() query: ListGameTypesQuery) {
+  @ApiOkResponse({ type: GameTypePage })
+  listGameTypes(@Query() query: ListGameTypesQuery): Promise<Paginated<GameTypeView>> {
     return this.catalog.listGameTypes(query);
   }
 
   @Public()
   @Get('game-types/:id')
   @ApiOperation({ summary: 'Game type detail with linked games' })
-  getGameType(@Param('id', ParseUUIDPipe) id: string) {
+  @ApiOkResponse({ type: GameTypeDetail })
+  getGameType(@Param('id', ParseUUIDPipe) id: string): Promise<GameTypeDetail> {
     return this.catalog.getGameType(id);
   }
 }

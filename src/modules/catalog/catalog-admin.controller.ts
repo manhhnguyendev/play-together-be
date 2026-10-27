@@ -8,12 +8,22 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiNoContentResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Roles } from '../../common/security/decorators';
 import {
   CreateGameDto,
   CreateGameTypeDto,
   CreateRankDto,
+  GameDetail,
+  GameRankDto,
+  GameTypeView,
   UpdateGameDto,
   UpdateGameTypeDto,
   UpdateRankDto,
@@ -29,57 +39,75 @@ export class CatalogAdminController {
 
   @Post('games')
   @ApiOperation({ summary: 'Create a game' })
-  createGame(@Body() dto: CreateGameDto) {
+  @ApiCreatedResponse({ type: GameDetail })
+  createGame(@Body() dto: CreateGameDto): Promise<GameDetail> {
     return this.catalog.createGame(dto);
   }
 
   @Patch('games/:id')
   @ApiOperation({ summary: 'Update a game (including game type links)' })
-  updateGame(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateGameDto) {
+  @ApiOkResponse({ type: GameDetail })
+  updateGame(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateGameDto): Promise<GameDetail> {
     return this.catalog.updateGame(id, dto);
   }
 
   @Delete('games/:id')
   @HttpCode(204)
   @ApiOperation({ summary: 'Delete an unreferenced game' })
+  @ApiNoContentResponse()
   async removeGame(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     await this.catalog.removeGame(id);
   }
 
   @Post('games/:id/ranks')
   @ApiOperation({ summary: 'Add a rank to a game' })
-  createRank(@Param('id', ParseUUIDPipe) gameId: string, @Body() dto: CreateRankDto) {
+  @ApiCreatedResponse({ type: GameRankDto })
+  createRank(
+    @Param('id', ParseUUIDPipe) gameId: string,
+    @Body() dto: CreateRankDto,
+  ): Promise<GameRankDto> {
     return this.catalog.createRank(gameId, dto);
   }
 
   @Patch('ranks/:rankId')
   @ApiOperation({ summary: 'Update a rank' })
-  updateRank(@Param('rankId', ParseUUIDPipe) rankId: string, @Body() dto: UpdateRankDto) {
+  @ApiOkResponse({ type: GameRankDto })
+  updateRank(
+    @Param('rankId', ParseUUIDPipe) rankId: string,
+    @Body() dto: UpdateRankDto,
+  ): Promise<GameRankDto> {
     return this.catalog.updateRank(rankId, dto);
   }
 
   @Delete('ranks/:rankId')
   @HttpCode(204)
   @ApiOperation({ summary: 'Delete a rank that no player uses' })
+  @ApiNoContentResponse()
   async removeRank(@Param('rankId', ParseUUIDPipe) rankId: string): Promise<void> {
     await this.catalog.removeRank(rankId);
   }
 
   @Post('game-types')
   @ApiOperation({ summary: 'Create a game type' })
-  createGameType(@Body() dto: CreateGameTypeDto) {
+  @ApiCreatedResponse({ type: GameTypeView })
+  createGameType(@Body() dto: CreateGameTypeDto): Promise<GameTypeView> {
     return this.catalog.createGameType(dto);
   }
 
   @Patch('game-types/:id')
   @ApiOperation({ summary: 'Update a game type' })
-  updateGameType(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateGameTypeDto) {
+  @ApiOkResponse({ type: GameTypeView })
+  updateGameType(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateGameTypeDto,
+  ): Promise<GameTypeView> {
     return this.catalog.updateGameType(id, dto);
   }
 
   @Delete('game-types/:id')
   @HttpCode(204)
   @ApiOperation({ summary: 'Delete a game type' })
+  @ApiNoContentResponse()
   async removeGameType(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     await this.catalog.removeGameType(id);
   }

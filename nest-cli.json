@@ -5,6 +5,15 @@
   "compilerOptions": {
     "deleteOutDir": true,
     "tsConfigPath": "tsconfig.build.json",
-    "assets": [{ "include": "db/migrations/**/*", "watchAssets": true }]
+    "assets": [{ "include": "db/migrations/**/*", "watchAssets": true }],
+    "plugins": [
+      {
+        "name": "@nestjs/swagger/plugin",
+        "options": {
+          "classValidatorShim": true,
+          "introspectComments": false
+        }
+      }
+    ]
   }
 }

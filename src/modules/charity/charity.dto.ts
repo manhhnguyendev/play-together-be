@@ -15,6 +15,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { MIN_DONATION, MIN_WITHDRAWAL } from '../../common/money/money';
+import { PageMetaDto } from '../../common/openapi/paginated.dto';
 import { PageQueryDto } from '../../common/pagination/pagination';
 
 export const WITHDRAWAL_DECISIONS = ['PAID', 'REJECTED'] as const;
@@ -176,46 +177,141 @@ export class ListCharityWithdrawalsQuery extends PageQueryDto {
   status?: (typeof WITHDRAWAL_STATUSES)[number];
 }
 
-export type CharityStats = {
+export class CharityStats {
+  @ApiProperty({ description: 'Total amount donated, in VND' })
   raised: number;
+
+  @ApiProperty()
   donations: number;
+
+  @ApiProperty()
   donors: number;
-};
+}
 
-export type CharityView = {
+export class CharityAccountRef {
+  @ApiProperty({ format: 'uuid' })
   id: string;
+
+  @ApiProperty({ format: 'email' })
+  email: string;
+}
+
+export class CharityView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ format: 'uuid' })
   userId: string;
+
+  @ApiProperty()
   organizationName: string;
+
+  @ApiProperty({ nullable: true })
   avatarUrl: string | null;
+
+  @ApiProperty({ nullable: true })
   information: string | null;
+
+  @ApiProperty({ nullable: true })
   address: string | null;
+
+  @ApiProperty({ nullable: true, format: 'email', description: 'Contact email' })
   email: string | null;
+
+  @ApiProperty({ nullable: true })
   phone: string | null;
+
+  @ApiProperty({ description: 'Available balance, in VND' })
   balance: number;
+
+  @ApiProperty()
   isActive: boolean;
+
+  @ApiProperty({ format: 'date-time' })
   createdAt: string;
+
+  @ApiProperty({ format: 'date-time' })
   updatedAt: string;
+
+  @ApiProperty({ type: CharityStats })
   stats: CharityStats;
-  account: { id: string; email: string } | null;
-};
 
-export type DonationView = {
+  @ApiProperty({ type: CharityAccountRef, nullable: true })
+  account: CharityAccountRef | null;
+}
+
+export class DonationDonor {
+  @ApiProperty({ format: 'uuid' })
   id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty({ nullable: true })
+  avatarUrl: string | null;
+}
+
+export class DonationView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ format: 'uuid' })
   charityId: string;
+
+  @ApiProperty({ nullable: true })
   charityName: string | null;
+
+  @ApiProperty({ description: 'Amount in VND' })
   amount: number;
+
+  @ApiProperty({ nullable: true })
   message: string | null;
-  donor: { id: string; name: string; avatarUrl: string | null } | null;
-  createdAt: string;
-};
 
-export type CharityWithdrawalView = {
-  id: string;
-  charityId: string;
-  charityName: string | null;
-  amount: number;
-  status: (typeof WITHDRAWAL_STATUSES)[number];
-  note: string | null;
-  processedAt: string | null;
+  @ApiProperty({ type: DonationDonor, nullable: true })
+  donor: DonationDonor | null;
+
+  @ApiProperty({ format: 'date-time' })
   createdAt: string;
-};
+}
+
+export class CharityWithdrawalView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ format: 'uuid' })
+  charityId: string;
+
+  @ApiProperty({ nullable: true })
+  charityName: string | null;
+
+  @ApiProperty({ description: 'Amount in VND' })
+  amount: number;
+
+  @ApiProperty({ enum: WITHDRAWAL_STATUSES })
+  status: (typeof WITHDRAWAL_STATUSES)[number];
+
+  @ApiProperty({ nullable: true })
+  note: string | null;
+
+  @ApiProperty({ format: 'date-time', nullable: true })
+  processedAt: string | null;
+
+  @ApiProperty({ format: 'date-time' })
+  createdAt: string;
+}
+
+export class CharityPage {
+  @ApiProperty({ type: [CharityView] })
+  items: CharityView[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
+}
+
+export class CharityWithdrawalPage {
+  @ApiProperty({ type: [CharityWithdrawalView] })
+  items: CharityWithdrawalView[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
+}

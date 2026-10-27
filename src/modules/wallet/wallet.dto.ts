@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 import { MAX_DEPOSIT, MIN_DEPOSIT, MIN_WITHDRAWAL } from '../../common/money/money';
+import { PageMetaDto } from '../../common/openapi/paginated.dto';
 import { PageQueryDto } from '../../common/pagination/pagination';
 
 export const LEDGER_TYPES = [
@@ -141,3 +142,76 @@ export type WalletSummary = {
   pendingBalance: number;
   pendingCredits: Array<{ id: string; orderId: string; amount: number; availableAt: string }>;
 };
+
+export class WithdrawalUserRef {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty({ format: 'email' })
+  email: string;
+}
+
+export class WithdrawalView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ description: 'Amount in VND' })
+  amount: number;
+
+  @ApiProperty({ enum: ['PENDING', 'PAID', 'REJECTED', 'CANCELLED'] })
+  status: 'PENDING' | 'PAID' | 'REJECTED' | 'CANCELLED';
+
+  @ApiProperty({ nullable: true })
+  note: string | null;
+
+  @ApiProperty({ format: 'date-time' })
+  createdAt: string;
+
+  @ApiProperty({ format: 'date-time', nullable: true })
+  processedAt: string | null;
+
+  @ApiProperty({ type: WithdrawalUserRef })
+  user: WithdrawalUserRef;
+}
+
+export class MyWithdrawalView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ description: 'Amount in VND' })
+  amount: number;
+
+  @ApiProperty({ enum: ['PENDING', 'PAID', 'REJECTED', 'CANCELLED'] })
+  status: 'PENDING' | 'PAID' | 'REJECTED' | 'CANCELLED';
+
+  @ApiProperty()
+  provider: string;
+
+  @ApiProperty({ nullable: true })
+  note: string | null;
+
+  @ApiProperty({ format: 'date-time' })
+  createdAt: string;
+
+  @ApiProperty({ format: 'date-time', nullable: true })
+  processedAt: string | null;
+}
+
+export class WithdrawalResolutionDto {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ enum: ['PENDING', 'PAID', 'REJECTED', 'CANCELLED'] })
+  status: 'PENDING' | 'PAID' | 'REJECTED' | 'CANCELLED';
+}
+
+export class WithdrawalPage {
+  @ApiProperty({ type: [WithdrawalView] })
+  items: WithdrawalView[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
+}
