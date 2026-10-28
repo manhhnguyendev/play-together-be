@@ -11,8 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { STATUS_CODES } from 'node:http';
 import { AppError } from './app-error';
 import { ErrorCode } from './error-codes';
-
-type PgError = { code?: string; constraint?: string; detail?: string };
+import { PG_CHECK_VIOLATION, PG_FOREIGN_KEY_VIOLATION, PG_UNIQUE_VIOLATION, type PgError } from './pg-errors';
 
 @Catch()
 export class ProblemDetailsFilter implements ExceptionFilter {
@@ -75,7 +74,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
 
     const pgError = exception as PgError;
 
-    if (pgError?.code === '23505') {
+    if (pgError?.code === PG_UNIQUE_VIOLATION) {
       return {
         status: HttpStatus.CONFLICT,
         code: ErrorCode.conflict,
@@ -84,7 +83,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       };
     }
 
-    if (pgError?.code === '23503') {
+    if (pgError?.code === PG_FOREIGN_KEY_VIOLATION) {
       return {
         status: HttpStatus.CONFLICT,
         code: ErrorCode.referenceConflict,
@@ -93,7 +92,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       };
     }
 
-    if (pgError?.code === '23514') {
+    if (pgError?.code === PG_CHECK_VIOLATION) {
       return {
         status: HttpStatus.UNPROCESSABLE_ENTITY,
         code: ErrorCode.constraintViolation,

@@ -15,7 +15,12 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { MAX_HOURS_PER_HIRE, MIN_HOURS_PER_HIRE } from '../../common/money/money';
+import {
+  MAX_HOURS_PER_HIRE,
+  MAX_PRICE_PER_HOUR,
+  MIN_HOURS_PER_HIRE,
+  MIN_PRICE_PER_HOUR,
+} from '../../common/money/money';
 import { PageMetaDto } from '../../common/openapi/paginated.dto';
 import { PageQueryDto } from '../../common/pagination/pagination';
 
@@ -74,8 +79,8 @@ export class PlayerModeDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @Min(10_000)
-  @Max(10_000_000)
+  @Min(MIN_PRICE_PER_HOUR)
+  @Max(MAX_PRICE_PER_HOUR)
   pricePerHour?: number;
 
   @ApiPropertyOptional({ example: 4, minimum: MIN_HOURS_PER_HIRE, maximum: MAX_HOURS_PER_HIRE })

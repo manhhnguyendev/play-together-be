@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
+import { Clock } from '../../common/time/time';
 import { behaviorHistory, behaviorPoints } from '../../db/schema';
 import { StatsService } from '../users/stats.service';
 
@@ -39,6 +40,7 @@ export class BehaviorService {
   constructor(
     @Inject(DB) private readonly db: AppDatabase,
     private readonly stats: StatsService,
+    private readonly clock: Clock,
   ) {}
 
   async get(userId: string): Promise<{ points: number; satisfaction: number }> {
@@ -100,7 +102,7 @@ export class BehaviorService {
 
     await executor
       .update(behaviorPoints)
-      .set({ points: nextPoints, satisfaction: nextSatisfaction, updatedAt: new Date() })
+      .set({ points: nextPoints, satisfaction: nextSatisfaction, updatedAt: this.clock.now() })
       .where(eq(behaviorPoints.userId, userId));
 
     const historyRows: Array<typeof behaviorHistory.$inferInsert> = [];

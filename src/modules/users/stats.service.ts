@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { rankingPointsOf } from '../../common/money/money';
+import { Clock } from '../../common/time/time';
 import { behaviorPoints, orders, ratings, users } from '../../db/schema';
 
 const COUNTED_STATUSES = sql`('COMPLETED', 'ENDED_EARLY_BY_HIRER', 'ENDED_EARLY_BY_PLAYER')`;
@@ -23,7 +24,10 @@ export type RecomputedStats = {
  */
 @Injectable()
 export class StatsService {
-  constructor(@Inject(DB) private readonly db: AppDatabase) {}
+  constructor(
+    @Inject(DB) private readonly db: AppDatabase,
+    private readonly clock: Clock,
+  ) {}
 
   async recompute(userId: string, executor: DbExecutor = this.db): Promise<RecomputedStats> {
     const [ratingAgg] = await executor
@@ -72,7 +76,7 @@ export class StatsService {
 
     await executor
       .update(users)
-      .set({ ...stats, rankingPoints, updatedAt: new Date() })
+      .set({ ...stats, rankingPoints, updatedAt: this.clock.now() })
       .where(eq(users.id, userId));
 
     return { ...stats, rankingPoints };

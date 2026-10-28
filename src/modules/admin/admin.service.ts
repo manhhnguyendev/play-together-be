@@ -52,20 +52,43 @@ export class AdminService {
   ) {}
 
   async overview(): Promise<PlatformOverview> {
-    const [userAgg] = await this.db
-      .select({
-        total: count(),
-        active: sql<number>`count(*) filter (where ${users.isActive})`,
-        players: sql<number>`count(*) filter (where ${users.isPlayer})`,
-        charities: sql<number>`count(*) filter (where ${users.role} = 'CHARITY')`,
-        admins: sql<number>`count(*) filter (where ${users.role} = 'ADMIN')`,
-      })
-      .from(users);
-
-    const orderRows = await this.db
-      .select({ status: orders.status, value: count() })
-      .from(orders)
-      .groupBy(orders.status);
+    const [
+      [userAgg],
+      orderRows,
+      [feeRow],
+      [donationRow],
+      [userWithdrawals],
+      [charityWithdrawalCount],
+      [reportCount],
+      [feedbackCount],
+      [flaggedCount],
+      escrowHeld,
+    ] = await Promise.all([
+      this.db
+        .select({
+          total: count(),
+          active: sql<number>`count(*) filter (where ${users.isActive})`,
+          players: sql<number>`count(*) filter (where ${users.isPlayer})`,
+          charities: sql<number>`count(*) filter (where ${users.role} = 'CHARITY')`,
+          admins: sql<number>`count(*) filter (where ${users.role} = 'ADMIN')`,
+        })
+        .from(users),
+      this.db.select({ status: orders.status, value: count() }).from(orders).groupBy(orders.status),
+      this.db
+        .select({ value: sql<number>`coalesce(sum(${ledgerEntries.amount}), 0)` })
+        .from(ledgerEntries)
+        .where(and(eq(ledgerEntries.type, 'PLATFORM_FEE'), eq(ledgerEntries.accountType, 'PLATFORM'))),
+      this.db.select({ value: sql<number>`coalesce(sum(${donations.amount}), 0)` }).from(donations),
+      this.db.select({ value: count() }).from(withdrawals).where(eq(withdrawals.status, 'PENDING')),
+      this.db
+        .select({ value: count() })
+        .from(charityWithdrawals)
+        .where(eq(charityWithdrawals.status, 'PENDING')),
+      this.db.select({ value: count() }).from(reports).where(eq(reports.status, 'PENDING')),
+      this.db.select({ value: count() }).from(feedback).where(eq(feedback.status, 'PENDING')),
+      this.db.select({ value: count() }).from(ratings).where(eq(ratings.violationStatus, 'FLAGGED')),
+      this.wallet.escrowTotal(),
+    ]);
 
     const byStatus: Record<string, number> = {};
     let totalOrders = 0;
@@ -73,42 +96,6 @@ export class AdminService {
       byStatus[row.status] = Number(row.value);
       totalOrders += Number(row.value);
     }
-
-    const [feeRow] = await this.db
-      .select({ value: sql<number>`coalesce(sum(${ledgerEntries.amount}), 0)` })
-      .from(ledgerEntries)
-      .where(and(eq(ledgerEntries.type, 'PLATFORM_FEE'), eq(ledgerEntries.accountType, 'PLATFORM')));
-
-    const [donationRow] = await this.db
-      .select({ value: sql<number>`coalesce(sum(${donations.amount}), 0)` })
-      .from(donations);
-
-    const [userWithdrawals] = await this.db
-      .select({ value: count() })
-      .from(withdrawals)
-      .where(eq(withdrawals.status, 'PENDING'));
-
-    const [charityWithdrawalCount] = await this.db
-      .select({ value: count() })
-      .from(charityWithdrawals)
-      .where(eq(charityWithdrawals.status, 'PENDING'));
-
-    const [reportCount] = await this.db
-      .select({ value: count() })
-      .from(reports)
-      .where(eq(reports.status, 'PENDING'));
-
-    const [feedbackCount] = await this.db
-      .select({ value: count() })
-      .from(feedback)
-      .where(eq(feedback.status, 'PENDING'));
-
-    const [flaggedCount] = await this.db
-      .select({ value: count() })
-      .from(ratings)
-      .where(eq(ratings.violationStatus, 'FLAGGED'));
-
-    const escrowHeld = await this.wallet.escrowTotal();
 
     return {
       users: {

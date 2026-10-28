@@ -1,8 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, count, desc, eq, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
-import { DB, type AppDatabase } from '../../common/database/database.module';
+import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
+import { isUniqueViolation } from '../../common/errors/pg-errors';
 import { MIN_DONATION, MIN_WITHDRAWAL } from '../../common/money/money';
 import { offsetOf, paginated, type PageQueryDto, type Paginated } from '../../common/pagination/pagination';
 import { PasswordService } from '../../common/security/password.service';
@@ -27,10 +28,6 @@ import type {
 } from './charity.dto';
 
 const EMPTY_STATS: CharityStats = { raised: 0, donations: 0, donors: 0 };
-
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === '23505';
-}
 
 @Injectable()
 export class CharityService {
@@ -269,24 +266,14 @@ export class CharityService {
         .values({ charityId: locked.id, amount, note: note ?? null })
         .returning();
 
-      await this.wallet.post(tx, [
-        {
-          accountType: 'CHARITY',
-          accountId: locked.userId,
-          charityId: locked.id,
-          direction: 'DEBIT',
-          type: 'CHARITY_WITHDRAWAL',
-          amount,
-          note: note ?? 'Charity withdrawal requested',
-        },
-        {
-          accountType: 'EXTERNAL',
-          direction: 'CREDIT',
-          type: 'CHARITY_WITHDRAWAL',
-          amount,
-          note: `Withdrawal payout for ${locked.organizationName}`,
-        },
-      ]);
+      await this.postWithdrawalTransfer(tx, {
+        charityId: locked.id,
+        charityUserId: locked.userId,
+        amount,
+        flow: 'OUT',
+        charityNote: note ?? 'Charity withdrawal requested',
+        externalNote: `Withdrawal payout for ${locked.organizationName}`,
+      });
 
       return row;
     });
@@ -343,24 +330,13 @@ export class CharityService {
         .set({ balance: locked.balance + withdrawal.amount, updatedAt: now })
         .where(eq(charities.id, charity.id));
 
-      await this.wallet.post(tx, [
-        {
-          accountType: 'CHARITY',
-          accountId: locked.userId,
-          charityId: locked.id,
-          direction: 'CREDIT',
-          type: 'CHARITY_WITHDRAWAL',
-          amount: withdrawal.amount,
-          note: 'Withdrawal cancelled by charity',
-        },
-        {
-          accountType: 'EXTERNAL',
-          direction: 'DEBIT',
-          type: 'CHARITY_WITHDRAWAL',
-          amount: withdrawal.amount,
-          note: 'Withdrawal cancelled by charity',
-        },
-      ]);
+      await this.postWithdrawalTransfer(tx, {
+        charityId: locked.id,
+        charityUserId: locked.userId,
+        amount: withdrawal.amount,
+        flow: 'IN',
+        charityNote: 'Withdrawal cancelled by charity',
+      });
 
       const [row] = await tx
         .update(charityWithdrawals)
@@ -535,24 +511,13 @@ export class CharityService {
           .set({ balance: charity.balance + withdrawal.amount, updatedAt: now })
           .where(eq(charities.id, charity.id));
 
-        await this.wallet.post(tx, [
-          {
-            accountType: 'CHARITY',
-            accountId: charity.userId,
-            charityId: charity.id,
-            direction: 'CREDIT',
-            type: 'CHARITY_WITHDRAWAL',
-            amount: withdrawal.amount,
-            note: 'Withdrawal rejected; funds returned',
-          },
-          {
-            accountType: 'EXTERNAL',
-            direction: 'DEBIT',
-            type: 'CHARITY_WITHDRAWAL',
-            amount: withdrawal.amount,
-            note: 'Withdrawal rejected; funds returned',
-          },
-        ]);
+        await this.postWithdrawalTransfer(tx, {
+          charityId: charity.id,
+          charityUserId: charity.userId,
+          amount: withdrawal.amount,
+          flow: 'IN',
+          charityNote: 'Withdrawal rejected; funds returned',
+        });
       }
 
       const [row] = await tx
@@ -667,6 +632,38 @@ export class CharityService {
       stats,
       account,
     };
+  }
+
+  private postWithdrawalTransfer(
+    tx: DbExecutor,
+    params: {
+      charityId: string;
+      charityUserId: string;
+      amount: number;
+      flow: 'OUT' | 'IN';
+      charityNote: string;
+      externalNote?: string;
+    },
+  ): Promise<string> {
+    const outbound = params.flow === 'OUT';
+    return this.wallet.post(tx, [
+      {
+        accountType: 'CHARITY',
+        accountId: params.charityUserId,
+        charityId: params.charityId,
+        direction: outbound ? 'DEBIT' : 'CREDIT',
+        type: 'CHARITY_WITHDRAWAL',
+        amount: params.amount,
+        note: params.charityNote,
+      },
+      {
+        accountType: 'EXTERNAL',
+        direction: outbound ? 'CREDIT' : 'DEBIT',
+        type: 'CHARITY_WITHDRAWAL',
+        amount: params.amount,
+        note: params.externalNote ?? params.charityNote,
+      },
+    ]);
   }
 
   private mapWithdrawal(

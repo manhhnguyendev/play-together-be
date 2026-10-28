@@ -5,6 +5,7 @@ import { randomBytes, randomInt } from 'node:crypto';
 import { DB, type AppDatabase } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
+import { isUniqueViolation } from '../../common/errors/pg-errors';
 import { MailService } from '../../common/mail/mail.service';
 import { PasswordService } from '../../common/security/password.service';
 import { hashToken, TokenService, type TokenPair } from '../../common/security/token.service';
@@ -473,8 +474,4 @@ export class AuthService {
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
-}
-
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && (error as { code?: string }).code === '23505';
 }

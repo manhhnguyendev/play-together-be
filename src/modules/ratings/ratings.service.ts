@@ -1,9 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, count, desc, eq } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
+import { isUniqueViolation } from '../../common/errors/pg-errors';
 import { offsetOf, paginated, type Paginated } from '../../common/pagination/pagination';
 import { addHours, Clock } from '../../common/time/time';
 import { CONFIG_KEYS } from '../../db/schema';
@@ -23,15 +24,13 @@ import type {
 
 const RATEABLE_STATUSES = ['COMPLETED', 'ENDED_EARLY_BY_HIRER', 'ENDED_EARLY_BY_PLAYER'] as const;
 
+type PartyRow = { id: string; name: string; avatarUrl: string | null };
+
 const raterTable = alias(users, 'rater');
 const rateeTable = alias(users, 'ratee');
 
-const authorOf = (row: { id: string; name: string; avatarUrl: string | null } | null): RatingAuthor | null =>
+const authorOf = (row: PartyRow | null): RatingAuthor | null =>
   row ? { id: row.id, name: row.name, avatarUrl: row.avatarUrl } : null;
-
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === '23505';
-}
 
 @Injectable()
 export class RatingsService {
@@ -91,16 +90,7 @@ export class RatingsService {
     if (existingRating) throw AppError.conflict(ErrorCode.alreadyRated, 'You already rated this order');
 
     const rateeId = isHirer ? order.playerId : order.hirerId;
-    const [rater] = await this.db
-      .select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl })
-      .from(users)
-      .where(eq(users.id, raterId))
-      .limit(1);
-    const [ratee] = await this.db
-      .select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl })
-      .from(users)
-      .where(eq(users.id, rateeId))
-      .limit(1);
+    const { rater, ratee } = await this.loadParties(this.db, raterId, rateeId);
 
     let created: Rating;
     try {
@@ -214,18 +204,9 @@ export class RatingsService {
       .where(eq(ratings.id, ratingId))
       .returning();
 
-    const [rater] = await this.db
-      .select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl })
-      .from(users)
-      .where(eq(users.id, updated.raterId))
-      .limit(1);
-    const [ratee] = await this.db
-      .select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl })
-      .from(users)
-      .where(eq(users.id, updated.rateeId))
-      .limit(1);
+    const { rater, ratee } = await this.loadParties(this.db, updated.raterId, updated.rateeId);
 
-    return this.map(updated, rater ?? null, ratee ?? null);
+    return this.map(updated, rater, ratee);
   }
 
   async listFlagged(query: ListFlaggedRatingsQuery): Promise<Paginated<RatingDto>> {
@@ -321,18 +302,22 @@ export class RatingsService {
   }
 
   private async withAuthors(rating: Rating, executor: DbExecutor): Promise<RatingDto> {
-    const [rater] = await executor
-      .select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl })
-      .from(users)
-      .where(eq(users.id, rating.raterId))
-      .limit(1);
-    const [ratee] = await executor
-      .select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl })
-      .from(users)
-      .where(eq(users.id, rating.rateeId))
-      .limit(1);
+    const { rater, ratee } = await this.loadParties(executor, rating.raterId, rating.rateeId);
+    return this.map(rating, rater, ratee);
+  }
 
-    return this.map(rating, rater ?? null, ratee ?? null);
+  private async loadParties(
+    executor: DbExecutor,
+    raterId: string,
+    rateeId: string,
+  ): Promise<{ rater: PartyRow | null; ratee: PartyRow | null }> {
+    const ids = raterId === rateeId ? [raterId] : [raterId, rateeId];
+    const rows = await executor
+      .select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl })
+      .from(users)
+      .where(inArray(users.id, ids));
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    return { rater: byId.get(raterId) ?? null, ratee: byId.get(rateeId) ?? null };
   }
 
   async listForOrder(orderId: string, viewerId: string): Promise<RatingDto[]> {

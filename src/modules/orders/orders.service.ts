@@ -3,6 +3,7 @@ import { and, asc, count, desc, eq, inArray, lte, or, type SQL } from 'drizzle-o
 import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
+import { isUniqueViolation } from '../../common/errors/pg-errors';
 import { quoteEarlyEnd } from '../../common/money/money';
 import { offsetOf, paginated, type Paginated } from '../../common/pagination/pagination';
 import { addHours, addMinutes, Clock, MS_HOUR } from '../../common/time/time';
@@ -265,11 +266,12 @@ export class OrdersService {
     }
 
     const updated = await this.db.transaction(async (tx) => {
-      const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).for('update');
-      if (!order) throw AppError.notFound(ErrorCode.orderNotFound, 'Order not found');
-      if (order.status !== 'PROCESSING') {
-        throw AppError.conflict(ErrorCode.invalidOrderState, `Order is ${order.status}, not PROCESSING`);
-      }
+      const order = await this.lockOrder(tx, {
+        orderId,
+        actorId: playerId,
+        role: 'player',
+        expected: 'PROCESSING',
+      });
       if (order.respondBy.getTime() <= now.getTime()) {
         throw AppError.conflict(ErrorCode.invalidOrderState, 'This hire request has expired');
       }
@@ -320,14 +322,12 @@ export class OrdersService {
     const now = this.clock.now();
 
     const updated = await this.db.transaction(async (tx) => {
-      const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).for('update');
-      if (!order) throw AppError.notFound(ErrorCode.orderNotFound, 'Order not found');
-      if (order.playerId !== playerId) {
-        throw AppError.forbidden(ErrorCode.orderNotParticipant, 'You are not the player of this order');
-      }
-      if (order.status !== 'PROCESSING') {
-        throw AppError.conflict(ErrorCode.invalidOrderState, `Order is ${order.status}, not PROCESSING`);
-      }
+      const order = await this.lockOrder(tx, {
+        orderId,
+        actorId: playerId,
+        role: 'player',
+        expected: 'PROCESSING',
+      });
 
       const [rejected] = await tx
         .update(orders)
@@ -363,17 +363,13 @@ export class OrdersService {
     const now = this.clock.now();
 
     const updated = await this.db.transaction(async (tx) => {
-      const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).for('update');
-      if (!order) throw AppError.notFound(ErrorCode.orderNotFound, 'Order not found');
-      if (order.hirerId !== hirerId) {
-        throw AppError.forbidden(ErrorCode.orderNotParticipant, 'You are not the hirer of this order');
-      }
-      if (order.status !== 'PROCESSING') {
-        throw AppError.conflict(
-          ErrorCode.invalidOrderState,
-          'Only a pending request can be cancelled; use early-end for an accepted session',
-        );
-      }
+      const order = await this.lockOrder(tx, {
+        orderId,
+        actorId: hirerId,
+        role: 'hirer',
+        expected: 'PROCESSING',
+        statusMessage: 'Only a pending request can be cancelled; use early-end for an accepted session',
+      });
 
       const [cancelled] = await tx
         .update(orders)
@@ -407,14 +403,12 @@ export class OrdersService {
     const now = this.clock.now();
 
     const updated = await this.db.transaction(async (tx) => {
-      const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).for('update');
-      if (!order) throw AppError.notFound(ErrorCode.orderNotFound, 'Order not found');
-      if (order.hirerId !== actorId && order.playerId !== actorId) {
-        throw AppError.forbidden(ErrorCode.orderNotParticipant, 'You are not a participant of this order');
-      }
-      if (order.status !== 'ACCEPTED') {
-        throw AppError.conflict(ErrorCode.invalidOrderState, `Order is ${order.status}, not ACCEPTED`);
-      }
+      const order = await this.lockOrder(tx, {
+        orderId,
+        actorId,
+        role: 'participant',
+        expected: 'ACCEPTED',
+      });
       if (order.scheduledEndAt && order.scheduledEndAt.getTime() > now.getTime()) {
         throw AppError.badRequest(
           ErrorCode.orderNotFinished,
@@ -433,12 +427,13 @@ export class OrdersService {
     const now = this.clock.now();
 
     const updated = await this.db.transaction(async (tx) => {
-      const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).for('update');
-      if (!order) throw AppError.notFound(ErrorCode.orderNotFound, 'Order not found');
-      if (order.hirerId !== actorId && order.playerId !== actorId) {
-        throw AppError.forbidden(ErrorCode.orderNotParticipant, 'You are not a participant of this order');
-      }
-      if (order.status !== 'ACCEPTED' || !order.startsAt) {
+      const order = await this.lockOrder(tx, {
+        orderId,
+        actorId,
+        role: 'participant',
+        expected: 'ACCEPTED',
+      });
+      if (!order.startsAt) {
         throw AppError.conflict(ErrorCode.invalidOrderState, `Order is ${order.status}, not ACCEPTED`);
       }
 
@@ -750,6 +745,43 @@ export class OrdersService {
     return order;
   }
 
+  private async lockOrder(
+    tx: DbExecutor,
+    params: {
+      orderId: string;
+      actorId: string;
+      role: 'player' | 'hirer' | 'participant';
+      expected: OrderStatus;
+      statusMessage?: string;
+    },
+  ): Promise<Order> {
+    const [order] = await tx.select().from(orders).where(eq(orders.id, params.orderId)).for('update');
+    if (!order) throw AppError.notFound(ErrorCode.orderNotFound, 'Order not found');
+
+    if (params.role === 'player' && order.playerId !== params.actorId) {
+      throw AppError.forbidden(ErrorCode.orderNotParticipant, 'You are not the player of this order');
+    }
+    if (params.role === 'hirer' && order.hirerId !== params.actorId) {
+      throw AppError.forbidden(ErrorCode.orderNotParticipant, 'You are not the hirer of this order');
+    }
+    if (
+      params.role === 'participant' &&
+      order.hirerId !== params.actorId &&
+      order.playerId !== params.actorId
+    ) {
+      throw AppError.forbidden(ErrorCode.orderNotParticipant, 'You are not a participant of this order');
+    }
+
+    if (order.status !== params.expected) {
+      throw AppError.conflict(
+        ErrorCode.invalidOrderState,
+        params.statusMessage ?? `Order is ${order.status}, not ${params.expected}`,
+      );
+    }
+
+    return order;
+  }
+
   private async hydrate(rows: Order[], viewerId: string): Promise<OrderView[]> {
     if (rows.length === 0) return [];
 
@@ -833,8 +865,4 @@ export class OrdersService {
       };
     });
   }
-}
-
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && (error as { code?: string }).code === '23505';
 }

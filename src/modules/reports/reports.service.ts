@@ -1,9 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, count, desc, eq, ilike } from 'drizzle-orm';
+import { and, count, desc, eq, ilike, inArray } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
+import { isUniqueViolation } from '../../common/errors/pg-errors';
 import { offsetOf, paginated, type Paginated } from '../../common/pagination/pagination';
 import { addHours, Clock } from '../../common/time/time';
 import { CONFIG_KEYS, orders, ratings, reports, users, type Report } from '../../db/schema';
@@ -29,10 +30,6 @@ const targetTable = alias(users, 'target');
 
 const partyOf = (row: { id: string; name: string; avatarUrl: string | null } | null): ReportParty | null =>
   row ? { id: row.id, name: row.name, avatarUrl: row.avatarUrl } : null;
-
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === '23505';
-}
 
 @Injectable()
 export class ReportsService {
@@ -338,18 +335,14 @@ export class ReportsService {
   }
 
   private async withParties(report: Report, executor: DbExecutor): Promise<ReportDto> {
-    const [reporter] = await executor
+    const ids = report.reporterId === report.targetId ? [report.reporterId] : [report.reporterId, report.targetId];
+    const rows = await executor
       .select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl })
       .from(users)
-      .where(eq(users.id, report.reporterId))
-      .limit(1);
-    const [target] = await executor
-      .select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl })
-      .from(users)
-      .where(eq(users.id, report.targetId))
-      .limit(1);
+      .where(inArray(users.id, ids));
+    const byId = new Map(rows.map((row) => [row.id, row]));
 
-    return this.map({ report, reporter: reporter ?? null, target: target ?? null });
+    return this.map({ report, reporter: byId.get(report.reporterId) ?? null, target: byId.get(report.targetId) ?? null });
   }
 
   private map(row: {

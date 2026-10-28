@@ -18,6 +18,7 @@ import { Throttle } from '@nestjs/throttler';
 import type { AuthUser } from '../../common/security/auth-user';
 import { CurrentUser } from '../../common/security/current-user.decorator';
 import { Public } from '../../common/security/decorators';
+import { MS_MINUTE } from '../../common/time/time';
 import {
   AuthResponseDto,
   ChangePasswordDto,
@@ -44,7 +45,7 @@ export class AuthController {
   ) {}
 
   @Public()
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Throttle({ default: { limit: 10, ttl: MS_MINUTE } })
   @Post('register')
   @ApiOperation({ summary: 'Create a player account after verifying the email with /auth/otp/verify' })
   @ApiCreatedResponse({ type: AuthResponseDto })
@@ -53,7 +54,7 @@ export class AuthController {
   }
 
   @Public()
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Throttle({ default: { limit: 20, ttl: MS_MINUTE } })
   @Post('login')
   @HttpCode(200)
   @ApiOperation({ summary: 'Sign in with email and password' })
@@ -107,7 +108,7 @@ export class AuthController {
   }
 
   @Public()
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Throttle({ default: { limit: 5, ttl: MS_MINUTE } })
   @Post('otp/request')
   @HttpCode(202)
   @ApiOperation({ summary: 'Send a one-time verification code by email' })
@@ -117,7 +118,7 @@ export class AuthController {
   }
 
   @Public()
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Throttle({ default: { limit: 10, ttl: MS_MINUTE } })
   @Post('otp/verify')
   @HttpCode(200)
   @ApiOperation({ summary: 'Verify a one-time code (issues a reset token for PASSWORD_RESET)' })

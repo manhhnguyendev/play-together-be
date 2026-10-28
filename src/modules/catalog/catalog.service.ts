@@ -4,6 +4,7 @@ import { DB, type AppDatabase } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
 import { offsetOf, paginated, type Paginated } from '../../common/pagination/pagination';
+import { Clock } from '../../common/time/time';
 import {
   gameRanks,
   games,
@@ -32,7 +33,10 @@ import type {
 
 @Injectable()
 export class CatalogService {
-  constructor(@Inject(DB) private readonly db: AppDatabase) {}
+  constructor(
+    @Inject(DB) private readonly db: AppDatabase,
+    private readonly clock: Clock,
+  ) {}
 
   async mostFavorited(limit: number): Promise<FavoriteGameDto[]> {
     const rows = await this.db
@@ -152,7 +156,7 @@ export class CatalogService {
     if (dto.gameTypeIds) await this.assertGameTypesExist(dto.gameTypeIds);
 
     await this.db.transaction(async (tx) => {
-      const patch: Partial<typeof games.$inferInsert> = { updatedAt: new Date() };
+      const patch: Partial<typeof games.$inferInsert> = { updatedAt: this.clock.now() };
       if (dto.name !== undefined) patch.name = dto.name;
       if (dto.displayName !== undefined) patch.displayName = dto.displayName;
       if (dto.otherNames !== undefined) patch.otherNames = dto.otherNames;
@@ -250,7 +254,7 @@ export class CatalogService {
     const [existing] = await this.db.select().from(gameTypes).where(eq(gameTypes.id, id)).limit(1);
     if (!existing) throw AppError.notFound(ErrorCode.gameTypeNotFound, 'Game type not found');
 
-    const patch: Partial<typeof gameTypes.$inferInsert> = { updatedAt: new Date() };
+    const patch: Partial<typeof gameTypes.$inferInsert> = { updatedAt: this.clock.now() };
     if (dto.name !== undefined) patch.name = dto.name;
     if (dto.shortName !== undefined) patch.shortName = dto.shortName;
     if (dto.description !== undefined) patch.description = dto.description;

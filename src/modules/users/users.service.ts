@@ -582,7 +582,20 @@ export class UsersService {
 
   async isBlockedEitherWay(userA: string, userB: string): Promise<boolean> {
     const now = this.clock.now();
-    return (await this.isBlocked(userA, userB, now)) || (await this.isBlocked(userB, userA, now));
+    const [row] = await this.db
+      .select({ id: userBlocks.id })
+      .from(userBlocks)
+      .where(
+        and(
+          or(
+            and(eq(userBlocks.userId, userA), eq(userBlocks.blockedUserId, userB)),
+            and(eq(userBlocks.userId, userB), eq(userBlocks.blockedUserId, userA)),
+          ),
+          or(isNull(userBlocks.expiresAt), gt(userBlocks.expiresAt, now)),
+        ),
+      )
+      .limit(1);
+    return Boolean(row);
   }
 
   /** Used by the admin module to page through every account. */

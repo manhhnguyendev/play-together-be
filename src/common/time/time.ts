@@ -65,11 +65,6 @@ export function zonedParts(date: Date, timeZone: string): ZonedParts {
   };
 }
 
-export function minutesOfDayInZone(date: Date, timeZone: string): number {
-  const parts = zonedParts(date, timeZone);
-  return parts.hour * 60 + parts.minute;
-}
-
 export function timeZoneOffsetMs(date: Date, timeZone: string): number {
   const parts = zonedParts(date, timeZone);
   const asUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
