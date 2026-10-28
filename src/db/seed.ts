@@ -21,7 +21,6 @@ import {
   wallets,
   type Game,
   type GameRank,
-  type GameType,
   type User,
 } from './schema';
 

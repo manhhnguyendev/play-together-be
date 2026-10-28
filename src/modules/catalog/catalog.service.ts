@@ -14,7 +14,6 @@ import {
   userSkills,
   type Game,
   type GameRank,
-  type GameType,
 } from '../../db/schema';
 import type {
   CreateGameDto,

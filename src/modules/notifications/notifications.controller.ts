@@ -1,8 +1,20 @@
 import { Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiNoContentResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../../common/security/current-user.decorator';
 import type { AuthUser } from '../../common/security/auth-user';
-import { ListNotificationsQuery, NotificationDto } from './notifications.dto';
+import {
+  ListNotificationsQuery,
+  NotificationDeletedCountDto,
+  NotificationDto,
+  NotificationPage,
+  NotificationUpdatedCountDto,
+} from './notifications.dto';
 import { NotificationsService } from './notifications.service';
 
 @ApiTags('notifications')
@@ -13,6 +25,7 @@ export class NotificationsController {
 
   @Get()
   @ApiOperation({ summary: 'List my notifications' })
+  @ApiOkResponse({ type: NotificationPage })
   list(@CurrentUser() user: AuthUser, @Query() query: ListNotificationsQuery) {
     return this.notifications.list(user.id, query.page, query.pageSize, query.status);
   }
@@ -34,12 +47,14 @@ export class NotificationsController {
   @Post('read-all')
   @HttpCode(200)
   @ApiOperation({ summary: 'Mark every notification as read' })
+  @ApiOkResponse({ type: NotificationUpdatedCountDto })
   async markAllRead(@CurrentUser() user: AuthUser): Promise<{ updated: number }> {
     return { updated: await this.notifications.markAllRead(user.id) };
   }
 
   @Delete('read')
   @ApiOperation({ summary: 'Delete all read notifications' })
+  @ApiOkResponse({ type: NotificationDeletedCountDto })
   async removeRead(@CurrentUser() user: AuthUser): Promise<{ deleted: number }> {
     return { deleted: await this.notifications.removeAllRead(user.id) };
   }
@@ -47,6 +62,7 @@ export class NotificationsController {
   @Delete(':id')
   @HttpCode(204)
   @ApiOperation({ summary: 'Delete a notification' })
+  @ApiNoContentResponse()
   async remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<void> {
     await this.notifications.remove(user.id, id);
   }

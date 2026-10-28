@@ -20,11 +20,16 @@ export class ListSearchHistoryQuery {
   limit: number = 20;
 }
 
-export type SearchHistoryItem = {
+export class SearchHistoryItem {
+  @ApiProperty({ format: 'uuid' })
   id: string;
+
+  @ApiProperty()
   query: string;
+
+  @ApiProperty({ format: 'date-time' })
   createdAt: string;
-};
+}
 
 export class HotSearchQuery {
   @ApiPropertyOptional({ default: 10, minimum: 1, maximum: 20 })

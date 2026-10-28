@@ -1,8 +1,14 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import type { AuthUser } from '../../common/security/auth-user';
 import { CurrentUser } from '../../common/security/current-user.decorator';
-import { CreateReportDto, ListReportsQuery } from './reports.dto';
+import { CreateReportDto, ListReportsQuery, ReportDto, ReportPage } from './reports.dto';
 import { ReportsService } from './reports.service';
 
 @ApiTags('reports')
@@ -13,6 +19,7 @@ export class ReportsController {
 
   @Post('orders/:id/reports')
   @ApiOperation({ summary: 'Report the other party of a finished order' })
+  @ApiCreatedResponse({ type: ReportDto })
   create(
     @CurrentUser() user: AuthUser,
     @Param('id', ParseUUIDPipe) orderId: string,
@@ -23,12 +30,14 @@ export class ReportsController {
 
   @Get('reports/mine')
   @ApiOperation({ summary: 'Reports I submitted or received' })
+  @ApiOkResponse({ type: ReportPage })
   mine(@CurrentUser() user: AuthUser, @Query() query: ListReportsQuery) {
     return this.reports.listMine(user.id, query);
   }
 
   @Get('reports/:id')
   @ApiOperation({ summary: 'Report detail' })
+  @ApiOkResponse({ type: ReportDto })
   get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.reports.get(id, user);
   }

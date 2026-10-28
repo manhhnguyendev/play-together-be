@@ -13,7 +13,7 @@ async function main(): Promise<void> {
   const connection = await connectDatabase({
     driver: String(env.DATABASE_DRIVER),
     pgliteDir: String(env.PGLITE_DIR),
-    databaseUrl: env.DATABASE_URL ? String(env.DATABASE_URL) : undefined,
+    databaseUrl: typeof env.DATABASE_URL === 'string' ? env.DATABASE_URL : undefined,
     logging: false,
     migrate: true,
   });

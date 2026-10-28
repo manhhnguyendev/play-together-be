@@ -2,7 +2,12 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestj
 import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { AuthUser } from '../../common/security/auth-user';
 import { CurrentUser } from '../../common/security/current-user.decorator';
-import { CreateFeedbackDto, ListMyFeedbackQuery, MyFeedbackView } from './feedback.dto';
+import {
+  CreateFeedbackDto,
+  FeedbackPage,
+  ListMyFeedbackQuery,
+  MyFeedbackView,
+} from './feedback.dto';
 import { FeedbackService } from './feedback.service';
 
 @ApiTags('feedback')
@@ -20,6 +25,7 @@ export class FeedbackController {
 
   @Get('mine')
   @ApiOperation({ summary: 'Feedback I submitted' })
+  @ApiOkResponse({ type: FeedbackPage })
   mine(@CurrentUser() user: AuthUser, @Query() query: ListMyFeedbackQuery) {
     return this.feedbackService.listMine(user.id, query);
   }

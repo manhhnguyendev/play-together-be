@@ -1,6 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { sql } from 'drizzle-orm';
 import { DB, type AppDatabase } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
@@ -16,6 +16,18 @@ export class HealthController {
   @Public()
   @Get()
   @ApiOperation({ summary: 'Liveness probe with a database round-trip' })
+  @ApiOkResponse({
+    schema: {
+      type: 'object',
+      required: ['status', 'database', 'uptimeSeconds', 'version'],
+      properties: {
+        status: { type: 'string', example: 'ok' },
+        database: { type: 'string', example: 'up' },
+        uptimeSeconds: { type: 'number' },
+        version: { type: 'string' },
+      },
+    },
+  })
   async check(): Promise<{ status: string; database: string; uptimeSeconds: number; version: string }> {
     try {
       await this.db.execute(sql`select 1`);

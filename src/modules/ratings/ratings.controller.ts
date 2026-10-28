@@ -1,9 +1,22 @@
 import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import type { AuthUser } from '../../common/security/auth-user';
 import { CurrentUser } from '../../common/security/current-user.decorator';
 import { Public } from '../../common/security/decorators';
-import { CreateRatingDto, FlagRatingDto, ListRatingsQuery, RatingDto } from './ratings.dto';
+import {
+  CreateRatingDto,
+  FlagRatingDto,
+  ListRatingsQuery,
+  RatingDto,
+  RatingPage,
+  RatingSummaryDto,
+} from './ratings.dto';
 import { RatingsService } from './ratings.service';
 
 @ApiTags('ratings')
@@ -14,6 +27,7 @@ export class RatingsController {
   @Post('orders/:id/ratings')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Rate the other party of a finished order' })
+  @ApiCreatedResponse({ type: RatingDto })
   create(
     @CurrentUser() user: AuthUser,
     @Param('id', ParseUUIDPipe) orderId: string,
@@ -33,6 +47,7 @@ export class RatingsController {
   @Public()
   @Get('users/:id/ratings')
   @ApiOperation({ summary: 'Ratings received by a user' })
+  @ApiOkResponse({ type: RatingPage })
   list(@Param('id', ParseUUIDPipe) userId: string, @Query() query: ListRatingsQuery) {
     return this.ratings.listForUser(userId, query);
   }
@@ -40,6 +55,7 @@ export class RatingsController {
   @Public()
   @Get('users/:id/ratings/summary')
   @ApiOperation({ summary: 'Aggregate rating score and distribution' })
+  @ApiOkResponse({ type: RatingSummaryDto })
   summary(@Param('id', ParseUUIDPipe) userId: string) {
     return this.ratings.summary(userId);
   }
@@ -48,6 +64,7 @@ export class RatingsController {
   @ApiBearerAuth()
   @HttpCode(200)
   @ApiOperation({ summary: 'Flag a received rating for moderator review' })
+  @ApiOkResponse({ type: RatingDto })
   flag(
     @CurrentUser() user: AuthUser,
     @Param('id', ParseUUIDPipe) ratingId: string,

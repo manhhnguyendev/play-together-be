@@ -28,11 +28,13 @@ export function validateEnv(raw: Record<string, unknown>): Record<string, unknow
 
   env.JOBS_ENABLED = toBool(env.JOBS_ENABLED, nodeEnv !== 'test');
   env.JOBS_INTERVAL_MS = toInt(env.JOBS_INTERVAL_MS, 30_000);
-  env.EXPOSE_RESET_TOKEN = toBool(env.EXPOSE_RESET_TOKEN, nodeEnv !== 'production');
+  env.EXPOSE_OTP = toBool(env.EXPOSE_OTP, nodeEnv !== 'production');
+  env.SMTP_PORT = toInt(env.SMTP_PORT, 587);
+  env.SMTP_SECURE = toBool(env.SMTP_SECURE, false);
   env.SEED_DEMO_DATA = toBool(env.SEED_DEMO_DATA, false);
 
-  const accessSecret = String(env.JWT_ACCESS_SECRET ?? '');
-  const refreshSecret = String(env.JWT_REFRESH_SECRET ?? '');
+  const accessSecret = rawString(env.JWT_ACCESS_SECRET);
+  const refreshSecret = rawString(env.JWT_REFRESH_SECRET);
   if (nodeEnv === 'production') {
     if (env.DATABASE_DRIVER === 'postgres' && !env.DATABASE_URL) {
       throw new Error('DATABASE_URL is required when DATABASE_DRIVER=postgres');
@@ -51,17 +53,24 @@ export function validateEnv(raw: Record<string, unknown>): Record<string, unknow
   return env;
 }
 
+function rawString(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
 function toInt(value: unknown, fallback: number): number {
   if (value === undefined || value === null || value === '') return fallback;
-  const parsed = Number.parseInt(String(value), 10);
-  if (!Number.isFinite(parsed)) throw new Error(`Invalid integer environment value: ${String(value)}`);
+  const parsed = Number.parseInt(rawString(value), 10);
+  if (!Number.isFinite(parsed)) throw new Error(`Invalid integer environment value: ${rawString(value)}`);
   return parsed;
 }
 
 function toBool(value: unknown, fallback: boolean): boolean {
   if (value === undefined || value === null || value === '') return fallback;
-  const normalized = String(value).toLowerCase();
+  const normalized = rawString(value).toLowerCase();
   if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
   if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
-  throw new Error(`Invalid boolean environment value: ${String(value)}`);
+  throw new Error(`Invalid boolean environment value: ${rawString(value)}`);
 }

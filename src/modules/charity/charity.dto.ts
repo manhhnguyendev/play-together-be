@@ -9,7 +9,6 @@ import {
   IsString,
   IsUrl,
   Matches,
-  Max,
   MaxLength,
   Min,
   MinLength,
@@ -274,6 +273,17 @@ export class DonationView {
   createdAt: string;
 }
 
+export class DonationResultView {
+  @ApiProperty({ format: 'uuid' })
+  donationId: string;
+
+  @ApiProperty({ format: 'uuid' })
+  charityId: string;
+
+  @ApiProperty({ description: 'Amount in VND' })
+  amount: number;
+}
+
 export class CharityWithdrawalView {
   @ApiProperty({ format: 'uuid' })
   id: string;
@@ -311,6 +321,14 @@ export class CharityPage {
 export class CharityWithdrawalPage {
   @ApiProperty({ type: [CharityWithdrawalView] })
   items: CharityWithdrawalView[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
+}
+
+export class DonationPage {
+  @ApiProperty({ type: [DonationView] })
+  items: DonationView[];
 
   @ApiProperty({ type: PageMetaDto })
   meta: PageMetaDto;

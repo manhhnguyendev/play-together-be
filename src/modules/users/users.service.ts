@@ -165,7 +165,7 @@ export class UsersService {
         user.isPlayer &&
         (user.status === 'ONLINE' || user.status === 'OFFLINE') &&
         !blockedByMe,
-    } as UserProfile;
+    };
   }
 
   async updateProfile(id: string, dto: UpdateProfileDto): Promise<UserSummary> {

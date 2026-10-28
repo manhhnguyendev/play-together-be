@@ -12,6 +12,9 @@ import * as schema from './schema';
 export const DB = Symbol('DATABASE');
 export const DB_CONNECTION = Symbol('DATABASE_CONNECTION');
 
+// PGlite and node-postgres expose different query-result HKTs; this alias is
+// the documented way to keep one database type across both drivers.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AppDatabase = PgDatabase<any, typeof schema>;
 /** Accepts either the root database or an open transaction. */
 export type DbExecutor = AppDatabase;

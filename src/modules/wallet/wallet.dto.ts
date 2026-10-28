@@ -152,12 +152,123 @@ export class MomoIpnDto {
   signature?: string;
 }
 
-export type WalletSummary = {
+export class PendingCreditView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ format: 'uuid' })
+  orderId: string;
+
+  @ApiProperty({ description: 'Amount in VND' })
+  amount: number;
+
+  @ApiProperty({ format: 'date-time' })
+  availableAt: string;
+}
+
+export class WalletSummary {
+  @ApiProperty({ format: 'uuid' })
   walletId: string;
+
+  @ApiProperty({ description: 'VND ready to spend or withdraw' })
   availableBalance: number;
+
+  @ApiProperty({ description: 'VND held until the next release' })
   pendingBalance: number;
-  pendingCredits: Array<{ id: string; orderId: string; amount: number; availableAt: string }>;
-};
+
+  @ApiProperty({ type: [PendingCreditView] })
+  pendingCredits: PendingCreditView[];
+}
+
+export class TransactionView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ format: 'uuid' })
+  transactionId: string;
+
+  @ApiProperty({ enum: LEDGER_TYPES })
+  type: (typeof LEDGER_TYPES)[number];
+
+  @ApiProperty({ enum: ['CREDIT', 'DEBIT'] })
+  direction: 'CREDIT' | 'DEBIT';
+
+  @ApiProperty({ description: 'Signed amount in VND' })
+  amount: number;
+
+  @ApiProperty({ nullable: true })
+  note: string | null;
+
+  @ApiProperty({ format: 'uuid', nullable: true })
+  orderId: string | null;
+
+  @ApiProperty({ format: 'date-time' })
+  createdAt: string;
+}
+
+export class TransactionPage {
+  @ApiProperty({ type: [TransactionView] })
+  items: TransactionView[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
+}
+
+export class DepositView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ description: 'Amount in VND' })
+  amount: number;
+
+  @ApiProperty({ enum: ['PENDING', 'PAID', 'REJECTED', 'CANCELLED'] })
+  status: 'PENDING' | 'PAID' | 'REJECTED' | 'CANCELLED';
+
+  @ApiProperty()
+  provider: string;
+
+  @ApiProperty({ nullable: true })
+  providerTxnId: string | null;
+
+  @ApiProperty({ format: 'date-time' })
+  createdAt: string;
+
+  @ApiProperty({ format: 'date-time', nullable: true })
+  completedAt: string | null;
+}
+
+export class DepositPage {
+  @ApiProperty({ type: [DepositView] })
+  items: DepositView[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
+}
+
+export class DepositStartView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ description: 'Amount in VND' })
+  amount: number;
+
+  @ApiProperty({ enum: ['PENDING', 'PAID', 'REJECTED', 'CANCELLED'] })
+  status: 'PENDING' | 'PAID' | 'REJECTED' | 'CANCELLED';
+
+  @ApiProperty({ description: 'Redirect the user here to pay' })
+  paymentUrl: string;
+
+  @ApiProperty({ description: 'True when the payment adapter is running in mock mode' })
+  mock: boolean;
+}
+
+export class StatusResultView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty()
+  status: string;
+}
 
 export class WithdrawalUserRef {
   @ApiProperty({ format: 'uuid' })
@@ -214,6 +325,14 @@ export class MyWithdrawalView {
 
   @ApiProperty({ format: 'date-time', nullable: true })
   processedAt: string | null;
+}
+
+export class MyWithdrawalPage {
+  @ApiProperty({ type: [MyWithdrawalView] })
+  items: MyWithdrawalView[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
 }
 
 export class WithdrawalResolutionDto {

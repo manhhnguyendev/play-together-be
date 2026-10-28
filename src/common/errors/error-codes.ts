@@ -16,6 +16,11 @@ export const ErrorCode = {
   invalidRefreshToken: 'invalid_refresh_token',
   passwordMismatch: 'password_mismatch',
   invalidResetToken: 'invalid_reset_token',
+  emailNotVerified: 'email_not_verified',
+  invalidOtp: 'invalid_otp',
+  otpExpired: 'otp_expired',
+  tooManyOtpRequests: 'too_many_otp_requests',
+  emailDeliveryFailed: 'email_delivery_failed',
   googleNotConfigured: 'google_not_configured',
   invalidGoogleToken: 'invalid_google_token',
   userNotFound: 'user_not_found',
@@ -66,6 +71,7 @@ export const ErrorCode = {
   paymentNotConfigured: 'payment_not_configured',
   invalidSignature: 'invalid_signature',
   amountMismatch: 'amount_mismatch',
+  databaseUnavailable: 'database_unavailable',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

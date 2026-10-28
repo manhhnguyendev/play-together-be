@@ -1,10 +1,24 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import type { AuthUser } from '../../common/security/auth-user';
 import { CurrentUser } from '../../common/security/current-user.decorator';
 import { Public } from '../../common/security/decorators';
 import { CharityService } from './charity.service';
-import { CreateDonationDto, ListCharitiesQuery, ListDonationsQuery } from './charity.dto';
+import {
+  CharityPage,
+  CharityView,
+  CreateDonationDto,
+  DonationPage,
+  DonationResultView,
+  ListCharitiesQuery,
+  ListDonationsQuery,
+} from './charity.dto';
 
 @ApiTags('charities')
 @Controller('charities')
@@ -14,6 +28,7 @@ export class CharitiesController {
   @Public()
   @Get()
   @ApiOperation({ summary: 'Browse active charities' })
+  @ApiOkResponse({ type: CharityPage })
   list(@Query() query: ListCharitiesQuery) {
     return this.charities.list(query);
   }
@@ -21,6 +36,7 @@ export class CharitiesController {
   @Public()
   @Get(':id')
   @ApiOperation({ summary: 'Charity detail and fundraising stats' })
+  @ApiOkResponse({ type: CharityView })
   get(@Param('id', ParseUUIDPipe) id: string) {
     return this.charities.get(id);
   }
@@ -28,6 +44,7 @@ export class CharitiesController {
   @ApiBearerAuth()
   @Get(':id/donations')
   @ApiOperation({ summary: 'Donations received by a charity' })
+  @ApiOkResponse({ type: DonationPage })
   donations(
     @CurrentUser() user: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
@@ -39,6 +56,7 @@ export class CharitiesController {
   @ApiBearerAuth()
   @Post(':id/donations')
   @ApiOperation({ summary: 'Donate to a charity from your wallet' })
+  @ApiCreatedResponse({ type: DonationResultView })
   donate(
     @CurrentUser() user: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,

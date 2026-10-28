@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsOptional, IsString, IsUrl, MaxLength, MinLength } from 'class-validator';
+import { PageMetaDto } from '../../common/openapi/paginated.dto';
 import { PageQueryDto } from '../../common/pagination/pagination';
 
 export class ListNotificationsQuery extends PageQueryDto {
@@ -29,11 +30,42 @@ export class BroadcastNotificationDto {
 }
 
 export class NotificationDto {
+  @ApiProperty({ format: 'uuid' })
   id: string;
+
+  @ApiProperty()
   title: string;
+
+  @ApiProperty()
   body: string;
+
+  @ApiProperty({ nullable: true })
   referenceUrl: string | null;
+
+  @ApiProperty({ enum: ['UNREAD', 'READ'] })
   status: 'UNREAD' | 'READ';
+
+  @ApiProperty({ format: 'date-time' })
   createdAt: string;
+
+  @ApiProperty({ format: 'date-time', nullable: true })
   readAt: string | null;
+}
+
+export class NotificationPage {
+  @ApiProperty({ type: [NotificationDto] })
+  items: NotificationDto[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
+}
+
+export class NotificationUpdatedCountDto {
+  @ApiProperty()
+  updated: number;
+}
+
+export class NotificationDeletedCountDto {
+  @ApiProperty()
+  deleted: number;
 }

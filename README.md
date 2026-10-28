@@ -105,7 +105,7 @@ docker compose up --build
 
 `.github/workflows/ci.yml` runs on pushes to `main` and on every pull request:
 
-1. `npm ci`, `npm run typecheck`, `npm run build`.
+1. `npm ci`, `npm run lint`, `npm run typecheck`, `npm run build`.
 2. Unit tests (`npm test`) and end-to-end tests (`npm run test:e2e`, in-memory PGlite).
 3. Docker image build, then boots the container and waits until `GET /api/v2/health` succeeds.
 
@@ -142,8 +142,10 @@ League of Legends, plus one demo donation. Credentials can be overridden with `S
 | `npm run db:migrate` | Apply pending migrations |
 | `npm run db:seed` | Seed configs, catalog and demo data (idempotent) |
 | `npm run db:reset` | Delete only the local `.data` database directory |
+| `npm run openapi:export` | Write `openapi.json` from a running server (`OPENAPI_URL` overrides the source) |
 | `npm test` | Unit tests |
 | `npm run test:e2e` | End-to-end tests (in-memory PGlite) |
+| `npm run lint` / `npm run lint:fix` | ESLint (type-aware) |
 | `npm run typecheck` | Strict TypeScript check |
 
 `scripts/reset-db.mjs` refuses to delete any path that does not contain `.data`.
@@ -186,6 +188,9 @@ League of Legends, plus one demo donation. Credentials can be overridden with `S
   (`Asia/Ho_Chi_Minh` by default).
 
 The interactive Swagger UI at `/docs` is the authoritative, always-up-to-date route reference.
+Every operation documents a typed success schema, so `openapi.json` is the input for the
+[Orval](https://orval.dev) clients generated in `play-together-fe` and `play-together-admin`
+(`npm run api:generate` in either app).
 
 ---
 
@@ -197,14 +202,22 @@ Access: **Public** = no token, **Auth** = any signed-in user, **Admin** = `ADMIN
 
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
-| POST | `/auth/register` | Public | Create an account and return a token pair |
+| POST | `/auth/register` | Public | Create an account after verifying the email (returns a token pair) |
 | POST | `/auth/login` | Public | Email + password login |
 | POST | `/auth/refresh` | Public | Rotate a refresh token |
 | POST | `/auth/logout` | Auth | Revoke a refresh token |
 | POST | `/auth/google` | Public | Sign in with a Google ID token (when configured) |
+| POST | `/auth/otp/request` | Public | Email a 6-digit one-time code (`REGISTER` or `PASSWORD_RESET`) |
+| POST | `/auth/otp/verify` | Public | Verify a code; issues the password-reset token for `PASSWORD_RESET` |
 | POST | `/auth/password/change` | Auth | Change the current password |
-| POST | `/auth/password/forgot` | Public | Issue a password-reset token |
 | POST | `/auth/password/reset` | Public | Consume a reset token |
+
+Registration requires a verified email: request a code with `purpose=REGISTER`, verify it, then
+call `/auth/register`. Password reset uses the same pair with `purpose=PASSWORD_RESET`; a successful
+verify returns the `resetToken` consumed by `/auth/password/reset` (valid 30 minutes). Codes are
+6 digits, valid 10 minutes, allow 5 attempts and at most 5 requests per 15 minutes per email.
+Without `SMTP_HOST` the API logs codes instead of sending them and, outside production, returns
+them as `devCode`.
 
 ### Users and profiles
 
@@ -377,11 +390,12 @@ orders. Admins are exempt.
 
 ## Database
 
-33 tables, 55 indexes, all created by `src/db/migrations/0000_init.sql`.
+The schema is created by the Drizzle migrations in `src/db/migrations` (`0000_init` plus the
+incremental migrations after it).
 
 | Group | Tables |
 | --- | --- |
-| Identity | `users`, `refresh_tokens`, `password_reset_tokens` |
+| Identity | `users`, `refresh_tokens`, `password_reset_tokens`, `email_otps` |
 | Profiles | `user_skills`, `user_hobbies`, `user_images`, `user_blocks`, `availability_windows` |
 | Catalog | `games`, `game_types`, `game_ranks`, `game_type_links` |
 | Orders | `orders`, `order_games`, `order_status_history` |
@@ -420,6 +434,7 @@ test/
   env.ts, app.helper.ts   Test environment and app factory
   auth.e2e-spec.ts        Auth, rotation, reset, guards
   marketplace.e2e-spec.ts Full hire → escrow → settle → review → report → moderation flow
+  v2-gaps.e2e-spec.ts     Search filters, favorites, wallet, ratings, reports, feedback
 ```
 
 ---
@@ -429,6 +444,7 @@ test/
 ```bash
 npm test          # unit tests: money, time zones, pagination
 npm run test:e2e  # end-to-end: boots the real app against in-memory PGlite
+npm run lint      # type-aware ESLint (flat config)
 npm run typecheck
 npm run build
 ```
@@ -439,8 +455,8 @@ through the same `seed()` function used in development.
 
 Covered end-to-end:
 
-1. Registration, login, duplicate email, validation, refresh rotation and reuse detection,
-   password reset, protected routes and role guards.
+1. Email verification, registration, login, duplicate email, validation, refresh rotation and
+   reuse detection, password reset through OTP, protected routes and role guards.
 2. Create order → accept → escrow hold → complete → 10% fee → pending credit → rating aggregates.
 3. A busy player cannot take a second order.
 4. Report → admin approval → refund → behavior penalty → account lock → refresh token revoked.
@@ -468,7 +484,10 @@ list; the important ones:
 | `CORS_ORIGINS` | `*` | Comma-separated origins, or `*` |
 | `GOOGLE_CLIENT_ID` | empty | Enables Google sign-in when set |
 | `MOMO_*` | empty | Enables the live MoMo gateway; empty = mock adapter |
-| `EXPOSE_RESET_TOKEN` | `true` | Return reset tokens in the response (dev only) |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | empty / `587` / `false` | Outgoing mail server; empty = log OTP codes |
+| `SMTP_USER` / `SMTP_PASS` | empty | SMTP credentials (omit for unauthenticated relays) |
+| `MAIL_FROM` | `Play Together <no-reply@playtogether.local>` | Sender address for OTP emails |
+| `EXPOSE_OTP` | dev: `true`, prod: `false` | Return `devCode` when SMTP is not configured |
 
 With no MoMo credentials the payment adapter runs in mock mode: `POST /wallet/deposits` returns a
 fake payment URL, and `POST /wallet/deposits/:id/confirm` credits the wallet so the whole top-up

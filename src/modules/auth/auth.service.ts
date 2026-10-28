@@ -1,14 +1,23 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, eq, sql } from 'drizzle-orm';
-import { randomBytes } from 'node:crypto';
+import { and, desc, eq, gte, sql } from 'drizzle-orm';
+import { randomBytes, randomInt } from 'node:crypto';
 import { DB, type AppDatabase } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
+import { MailService } from '../../common/mail/mail.service';
 import { PasswordService } from '../../common/security/password.service';
 import { hashToken, TokenService, type TokenPair } from '../../common/security/token.service';
 import { addMinutes, Clock } from '../../common/time/time';
-import { behaviorPoints, passwordResetTokens, refreshTokens, users, wallets, type User } from '../../db/schema';
+import {
+  behaviorPoints,
+  emailOtps,
+  passwordResetTokens,
+  refreshTokens,
+  users,
+  wallets,
+  type User,
+} from '../../db/schema';
 import { SystemConfigService } from '../system-config/system-config.service';
 import { toUserSummary } from '../users/user.mapper';
 import type { UserSummary } from '../users/users.dto';
@@ -16,19 +25,28 @@ import type { GoogleProfile } from './google-auth.service';
 import { GoogleAuthService } from './google-auth.service';
 import type {
   ChangePasswordDto,
-  ForgotPasswordResponseDto,
   LoginDto,
   RegisterDto,
+  RequestOtpDto,
+  RequestOtpResponseDto,
   ResetPasswordDto,
+  VerifyOtpDto,
+  VerifyOtpResponseDto,
 } from './auth.dto';
 
 const RESET_TOKEN_TTL_MINUTES = 30;
+const OTP_TTL_MINUTES = 10;
+const VERIFIED_EMAIL_WINDOW_MINUTES = 30;
+const MAX_OTP_ATTEMPTS = 5;
+const OTP_REQUEST_WINDOW_MINUTES = 15;
+const MAX_OTP_REQUESTS = 5;
 
 type AuthPayload = TokenPair & { user: UserSummary };
 
 @Injectable()
 export class AuthService {
-  private readonly exposeResetToken: boolean;
+  private readonly logger = new Logger(AuthService.name);
+  private readonly exposeOtp: boolean;
 
   constructor(
     @Inject(DB) private readonly db: AppDatabase,
@@ -36,15 +54,39 @@ export class AuthService {
     private readonly tokens: TokenService,
     private readonly configs: SystemConfigService,
     private readonly google: GoogleAuthService,
+    private readonly mail: MailService,
     private readonly clock: Clock,
     config: ConfigService,
   ) {
-    this.exposeResetToken = config.get<boolean>('EXPOSE_RESET_TOKEN') === true;
+    this.exposeOtp = config.get<boolean>('EXPOSE_OTP') === true;
   }
 
   async register(dto: RegisterDto, userAgent?: string): Promise<AuthPayload> {
     const email = normalizeEmail(dto.email);
     await this.assertEmailAvailable(email);
+
+    const now = this.clock.now();
+    const [verification] = await this.db
+      .select({ id: emailOtps.id })
+      .from(emailOtps)
+      .where(
+        and(
+          eq(emailOtps.email, email),
+          eq(emailOtps.purpose, 'REGISTER'),
+          sql`${emailOtps.verifiedAt} is not null`,
+          sql`${emailOtps.usedAt} is null`,
+          gte(emailOtps.expiresAt, now),
+        ),
+      )
+      .orderBy(desc(emailOtps.createdAt))
+      .limit(1);
+
+    if (!verification) {
+      throw AppError.badRequest(
+        ErrorCode.emailNotVerified,
+        'Verify this email address with a one-time code before registering',
+      );
+    }
 
     const passwordHash = await this.passwords.hash(dto.password);
 
@@ -66,6 +108,10 @@ export class AuthService {
 
         await tx.insert(wallets).values({ userId: created.id });
         await tx.insert(behaviorPoints).values({ userId: created.id });
+        await tx
+          .update(emailOtps)
+          .set({ usedAt: now })
+          .where(eq(emailOtps.id, verification.id));
         return created;
       });
     } catch (error) {
@@ -196,37 +242,124 @@ export class AuthService {
     return this.respond(updated, userAgent);
   }
 
-  async forgotPassword(emailInput: string): Promise<ForgotPasswordResponseDto> {
-    const email = normalizeEmail(emailInput);
-    const generic: ForgotPasswordResponseDto = {
-      message: 'If that email exists, a password reset link has been sent',
-    };
+  async requestOtp(dto: RequestOtpDto): Promise<RequestOtpResponseDto> {
+    const email = normalizeEmail(dto.email);
+    const purpose = dto.purpose;
+    const now = this.clock.now();
 
-    const [user] = await this.db
+    if (purpose === 'REGISTER') {
+      await this.assertEmailAvailable(email);
+    } else if (!(await this.findUser(email))) {
+      return this.otpResponse(purpose);
+    }
+
+    await this.assertOtpRequestAllowed(email, purpose, now);
+
+    await this.db
+      .update(emailOtps)
+      .set({ usedAt: now })
+      .where(
+        and(
+          eq(emailOtps.email, email),
+          eq(emailOtps.purpose, purpose),
+          sql`${emailOtps.usedAt} is null`,
+        ),
+      );
+
+    const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
+    const [row] = await this.db
+      .insert(emailOtps)
+      .values({
+        email,
+        purpose,
+        codeHash: hashToken(code),
+        expiresAt: addMinutes(now, OTP_TTL_MINUTES),
+      })
+      .returning({ id: emailOtps.id });
+
+    try {
+      await this.mail.sendOtp({ email, code, purpose, ttlMinutes: OTP_TTL_MINUTES });
+    } catch (error) {
+      this.logger.error(`Could not deliver an OTP to ${email}: ${String(error)}`);
+      await this.db.update(emailOtps).set({ usedAt: now }).where(eq(emailOtps.id, row.id));
+      throw AppError.unavailable(ErrorCode.emailDeliveryFailed, 'Could not send the verification email');
+    }
+
+    const response = this.otpResponse(purpose);
+    return this.exposeOtp && !this.mail.configured ? { ...response, devCode: code } : response;
+  }
+
+  async verifyOtp(dto: VerifyOtpDto): Promise<VerifyOtpResponseDto> {
+    const email = normalizeEmail(dto.email);
+    const now = this.clock.now();
+
+    const [otp] = await this.db
       .select()
-      .from(users)
-      .where(sql`lower(${users.email}) = ${email}`)
+      .from(emailOtps)
+      .where(
+        and(
+          eq(emailOtps.email, email),
+          eq(emailOtps.purpose, dto.purpose),
+          sql`${emailOtps.usedAt} is null`,
+        ),
+      )
+      .orderBy(desc(emailOtps.createdAt))
       .limit(1);
 
-    if (!user) return generic;
-
-    const now = this.clock.now();
-    await this.db
-      .update(passwordResetTokens)
-      .set({ usedAt: now })
-      .where(and(eq(passwordResetTokens.userId, user.id), sql`${passwordResetTokens.usedAt} is null`));
-
-    const raw = randomBytes(32).toString('base64url');
-    await this.db.insert(passwordResetTokens).values({
-      userId: user.id,
-      tokenHash: hashToken(raw),
-      expiresAt: addMinutes(now, RESET_TOKEN_TTL_MINUTES),
-    });
-
-    if (this.exposeResetToken) {
-      return { ...generic, resetToken: raw };
+    if (!otp) {
+      throw AppError.badRequest(ErrorCode.invalidOtp, 'Request a new verification code');
     }
-    return generic;
+    if (otp.expiresAt.getTime() <= now.getTime()) {
+      throw AppError.badRequest(ErrorCode.otpExpired, 'The verification code has expired');
+    }
+    if (otp.attempts >= MAX_OTP_ATTEMPTS) {
+      throw AppError.tooManyRequests(
+        ErrorCode.tooManyOtpRequests,
+        'Too many incorrect attempts; request a new verification code',
+      );
+    }
+    if (otp.codeHash !== hashToken(dto.code)) {
+      await this.db
+        .update(emailOtps)
+        .set({ attempts: otp.attempts + 1 })
+        .where(eq(emailOtps.id, otp.id));
+      throw AppError.badRequest(ErrorCode.invalidOtp, 'The verification code is incorrect');
+    }
+
+    if (dto.purpose === 'PASSWORD_RESET') {
+      const user = await this.findUser(email);
+      if (!user) {
+        throw AppError.badRequest(ErrorCode.invalidOtp, 'Request a new verification code');
+      }
+
+      const raw = randomBytes(32).toString('base64url');
+      await this.db.transaction(async (tx) => {
+        await tx
+          .update(emailOtps)
+          .set({ verifiedAt: now, usedAt: now })
+          .where(eq(emailOtps.id, otp.id));
+
+        await tx
+          .update(passwordResetTokens)
+          .set({ usedAt: now })
+          .where(and(eq(passwordResetTokens.userId, user.id), sql`${passwordResetTokens.usedAt} is null`));
+
+        await tx.insert(passwordResetTokens).values({
+          userId: user.id,
+          tokenHash: hashToken(raw),
+          expiresAt: addMinutes(now, RESET_TOKEN_TTL_MINUTES),
+        });
+      });
+
+      return { verified: true, resetToken: raw };
+    }
+
+    await this.db
+      .update(emailOtps)
+      .set({ verifiedAt: now, expiresAt: addMinutes(now, VERIFIED_EMAIL_WINDOW_MINUTES) })
+      .where(eq(emailOtps.id, otp.id));
+
+    return { verified: true };
   }
 
   async resetPassword(dto: ResetPasswordDto): Promise<void> {
@@ -271,6 +404,49 @@ export class AuthService {
     if (existing) {
       throw AppError.conflict(ErrorCode.emailTaken, 'This email is already registered');
     }
+  }
+
+  private async findUser(email: string): Promise<{ id: string } | undefined> {
+    const [user] = await this.db
+      .select({ id: users.id })
+      .from(users)
+      .where(sql`lower(${users.email}) = ${email}`)
+      .limit(1);
+    return user;
+  }
+
+  private async assertOtpRequestAllowed(
+    email: string,
+    purpose: RequestOtpDto['purpose'],
+    now: Date,
+  ): Promise<void> {
+    const [{ count }] = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(emailOtps)
+      .where(
+        and(
+          eq(emailOtps.email, email),
+          eq(emailOtps.purpose, purpose),
+          gte(emailOtps.createdAt, addMinutes(now, -OTP_REQUEST_WINDOW_MINUTES)),
+        ),
+      );
+
+    if (count >= MAX_OTP_REQUESTS) {
+      throw AppError.tooManyRequests(
+        ErrorCode.tooManyOtpRequests,
+        'Too many verification codes requested; try again later',
+      );
+    }
+  }
+
+  private otpResponse(purpose: RequestOtpDto['purpose']): RequestOtpResponseDto {
+    return {
+      message:
+        purpose === 'REGISTER'
+          ? 'A verification code has been sent to this email address'
+          : 'If that email exists, a verification code has been sent',
+      expiresInSeconds: OTP_TTL_MINUTES * 60,
+    };
   }
 
   private async assertLoginAllowed(user: User): Promise<void> {

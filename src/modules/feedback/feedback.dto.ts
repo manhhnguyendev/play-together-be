@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { PageMetaDto } from '../../common/openapi/paginated.dto';
 import { PageQueryDto } from '../../common/pagination/pagination';
 
 export const FEEDBACK_TYPES = ['BUG', 'FEATURE', 'COMPLAINT', 'OTHER'] as const;
@@ -55,4 +56,12 @@ export class MyFeedbackView {
 
   @ApiProperty({ format: 'date-time' })
   createdAt: string;
+}
+
+export class FeedbackPage {
+  @ApiProperty({ type: [MyFeedbackView] })
+  items: MyFeedbackView[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
 }

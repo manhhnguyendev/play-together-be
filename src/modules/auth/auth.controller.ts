@@ -21,14 +21,16 @@ import { Public } from '../../common/security/decorators';
 import {
   AuthResponseDto,
   ChangePasswordDto,
-  ForgotPasswordDto,
-  ForgotPasswordResponseDto,
   GoogleLoginDto,
   LoginDto,
   RefreshTokenDto,
   RegisterDto,
+  RequestOtpDto,
+  RequestOtpResponseDto,
   ResetPasswordDto,
   TokenPairDto,
+  VerifyOtpDto,
+  VerifyOtpResponseDto,
 } from './auth.dto';
 import { AuthService } from './auth.service';
 import { GoogleAuthService } from './google-auth.service';
@@ -44,7 +46,7 @@ export class AuthController {
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('register')
-  @ApiOperation({ summary: 'Create a player account' })
+  @ApiOperation({ summary: 'Create a player account after verifying the email with /auth/otp/verify' })
   @ApiCreatedResponse({ type: AuthResponseDto })
   register(@Body() dto: RegisterDto, @Headers('user-agent') userAgent?: string): Promise<AuthResponseDto> {
     return this.auth.register(dto, userAgent);
@@ -106,12 +108,22 @@ export class AuthController {
 
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @Post('password/forgot')
+  @Post('otp/request')
   @HttpCode(202)
-  @ApiOperation({ summary: 'Request a password reset token' })
-  @ApiAcceptedResponse({ type: ForgotPasswordResponseDto })
-  forgotPassword(@Body() dto: ForgotPasswordDto): Promise<ForgotPasswordResponseDto> {
-    return this.auth.forgotPassword(dto.email);
+  @ApiOperation({ summary: 'Send a one-time verification code by email' })
+  @ApiAcceptedResponse({ type: RequestOtpResponseDto })
+  requestOtp(@Body() dto: RequestOtpDto): Promise<RequestOtpResponseDto> {
+    return this.auth.requestOtp(dto);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('otp/verify')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Verify a one-time code (issues a reset token for PASSWORD_RESET)' })
+  @ApiOkResponse({ type: VerifyOtpResponseDto })
+  verifyOtp(@Body() dto: VerifyOtpDto): Promise<VerifyOtpResponseDto> {
+    return this.auth.verifyOtp(dto);
   }
 
   @Public()

@@ -829,7 +829,7 @@ export class OrdersService {
           withinWindow &&
           !ratedSet.has(order.id),
         hasRated: ratedSet.has(order.id),
-        escrowStatus: (holdMap.get(order.id) ?? 'NONE') as OrderView['escrowStatus'],
+        escrowStatus: (holdMap.get(order.id) ?? 'NONE'),
       };
     });
   }

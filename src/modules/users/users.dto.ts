@@ -16,6 +16,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { MAX_HOURS_PER_HIRE, MIN_HOURS_PER_HIRE } from '../../common/money/money';
+import { PageMetaDto } from '../../common/openapi/paginated.dto';
 import { PageQueryDto } from '../../common/pagination/pagination';
 
 const USER_STATUSES = ['ONLINE', 'OFFLINE', 'BUSY'] as const;
@@ -315,17 +316,126 @@ export class UserSummary {
   createdAt: string;
 }
 
-export type UserProfile = UserSummary & {
+export class BehaviorView {
+  @ApiProperty({ minimum: 0, maximum: 100 })
+  points: number;
+
+  @ApiProperty({ minimum: 0, maximum: 100 })
+  satisfaction: number;
+}
+
+export class AvailabilityWindowView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ minimum: 1, maximum: 7, description: 'Monday = 1 ... Sunday = 7' })
+  dayOfWeek: number;
+
+  @ApiProperty({ description: 'Minutes from midnight' })
+  startMinute: number;
+
+  @ApiProperty({ description: 'Minutes from midnight, exclusive' })
+  endMinute: number;
+}
+
+export class UserImageView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty()
+  url: string;
+
+  @ApiProperty({ format: 'date-time' })
+  createdAt: string;
+}
+
+export class BlockedUserView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ type: UserSummary })
+  user: UserSummary;
+
+  @ApiProperty({ format: 'date-time', nullable: true })
+  expiresAt: string | null;
+}
+
+export class SkillGameRefView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty({ nullable: true })
+  displayName: string | null;
+}
+
+export class SkillRankRefView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty()
+  no: number;
+
+  @ApiProperty()
+  name: string;
+}
+
+export class UserSkillView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ type: SkillGameRefView })
+  game: SkillGameRefView;
+
+  @ApiProperty({ type: SkillRankRefView, nullable: true })
+  rank: SkillRankRefView | null;
+}
+
+export class UserHobbyView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty({ nullable: true })
+  displayName: string | null;
+}
+
+export class UserProfileView extends UserSummary {
+  @ApiProperty({ nullable: true, description: 'Only exposed to the account owner' })
   dateOfBirth: string | null;
-  behavior: { points: number; satisfaction: number };
-  skills: Array<{
-    id: string;
-    game: { id: string; name: string; displayName: string | null };
-    rank: { id: string; no: number; name: string } | null;
-  }>;
-  hobbies: Array<{ id: string; name: string; displayName: string | null }>;
-  images: Array<{ id: string; url: string; createdAt: string }>;
-  availability: Array<{ id: string; dayOfWeek: number; startMinute: number; endMinute: number }>;
+
+  @ApiProperty({ type: BehaviorView })
+  behavior: BehaviorView;
+
+  @ApiProperty({ type: [UserSkillView] })
+  skills: UserSkillView[];
+
+  @ApiProperty({ type: [UserHobbyView] })
+  hobbies: UserHobbyView[];
+
+  @ApiProperty({ type: [UserImageView] })
+  images: UserImageView[];
+
+  @ApiProperty({ type: [AvailabilityWindowView] })
+  availability: AvailabilityWindowView[];
+
+  @ApiProperty()
   isBlockedByMe: boolean;
+
+  @ApiProperty()
   canHire: boolean;
-};
+}
+
+export type UserProfile = UserProfileView;
+
+export class UserPage {
+  @ApiProperty({ type: [UserSummary] })
+  items: UserSummary[];
+
+  @ApiProperty({ type: PageMetaDto })
+  meta: PageMetaDto;
+}

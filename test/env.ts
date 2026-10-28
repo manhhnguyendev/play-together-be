@@ -14,5 +14,5 @@ process.env.JWT_REFRESH_TTL = '2592000';
 process.env.BCRYPT_ROUNDS = '4';
 process.env.THROTTLE_TTL = '60';
 process.env.THROTTLE_LIMIT = '100000';
-process.env.EXPOSE_RESET_TOKEN = 'true';
+process.env.EXPOSE_OTP = 'true';
 process.env.SEED_DEMO_DATA = 'false';

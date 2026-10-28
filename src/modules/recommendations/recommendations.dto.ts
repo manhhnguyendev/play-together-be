@@ -1,7 +1,7 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
-import type { UserSummary } from '../users/users.dto';
+import { UserSummary } from '../users/users.dto';
 
 export class ListRecommendationsQuery {
   @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 50 })
@@ -13,9 +13,24 @@ export class ListRecommendationsQuery {
   limit: number = 20;
 }
 
-export type RecommendationView = {
+export class RecommendationGameView {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty()
+  name: string;
+}
+
+export class RecommendationView {
+  @ApiProperty({ type: UserSummary })
   user: UserSummary;
+
+  @ApiProperty()
   score: number;
-  matchedGames: Array<{ id: string; name: string }>;
+
+  @ApiProperty({ type: [RecommendationGameView] })
+  matchedGames: RecommendationGameView[];
+
+  @ApiProperty()
   reason: string;
-};
+}
