@@ -164,6 +164,32 @@ export class CreateAvailabilityDto {
   endMinute: number;
 }
 
+export class UpdateAvailabilityDto {
+  @ApiPropertyOptional({ minimum: 1, maximum: 7, description: 'Monday = 1 ... Sunday = 7' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(7)
+  @IsOptional()
+  dayOfWeek?: number;
+
+  @ApiPropertyOptional({ minimum: 0, maximum: 1439, description: 'Minutes from midnight' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1439)
+  @IsOptional()
+  startMinute?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 1440, description: 'Minutes from midnight, exclusive' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(1440)
+  @IsOptional()
+  endMinute?: number;
+}
+
 export class BlockUserDto {
   @ApiProperty({ format: 'uuid' })
   @IsUUID()

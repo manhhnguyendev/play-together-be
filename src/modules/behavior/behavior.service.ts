@@ -1,11 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { count, desc, eq } from 'drizzle-orm';
 import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
+import { offsetOf, paginated, type PageQueryDto, type Paginated } from '../../common/pagination/pagination';
 import { Clock } from '../../common/time/time';
 import { behaviorHistory, behaviorPoints } from '../../db/schema';
 import { StatsService } from '../users/stats.service';
+import type { BehaviorHistoryItemDto } from './behavior.dto';
 
 export type BehaviorChange = {
   points?: number;
@@ -51,6 +53,37 @@ export class BehaviorService {
       .limit(1);
 
     return { points: row?.points ?? 100, satisfaction: row?.satisfaction ?? 100 };
+  }
+
+  async history(userId: string, query: PageQueryDto): Promise<Paginated<BehaviorHistoryItemDto>> {
+    const where = eq(behaviorHistory.userId, userId);
+
+    const [rows, [total]] = await Promise.all([
+      this.db
+        .select()
+        .from(behaviorHistory)
+        .where(where)
+        .orderBy(desc(behaviorHistory.createdAt))
+        .limit(query.pageSize)
+        .offset(offsetOf(query.page, query.pageSize)),
+      this.db.select({ value: count() }).from(behaviorHistory).where(where),
+    ]);
+
+    return paginated(
+      rows.map((row) => ({
+        id: row.id,
+        event: row.event,
+        operation: row.operation,
+        pointType: row.pointType,
+        amount: row.amount,
+        referenceId: row.referenceId,
+        note: row.note,
+        createdAt: row.createdAt.toISOString(),
+      })),
+      total?.value ?? 0,
+      query.page,
+      query.pageSize,
+    );
   }
 
   async applyRating(

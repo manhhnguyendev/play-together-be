@@ -388,7 +388,61 @@
             }
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "My behavior points",
+        "tags": [
+          "behavior"
+        ]
+      }
+    },
+    "/api/v2/users/me/behavior/history": {
+      "get": {
+        "operationId": "BehaviorController_myHistory",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BehaviorHistoryPage"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "My behavior point history, newest first",
         "tags": [
           "behavior"
         ]
@@ -1104,6 +1158,50 @@
       }
     },
     "/api/v2/users/me/availability/{windowId}": {
+      "patch": {
+        "operationId": "UsersController_updateAvailability",
+        "parameters": [
+          {
+            "name": "windowId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAvailabilityDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailabilityWindowView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update an availability window",
+        "tags": [
+          "users"
+        ]
+      },
       "delete": {
         "operationId": "UsersController_removeAvailability",
         "parameters": [
@@ -5850,6 +5948,88 @@
           "satisfaction"
         ]
       },
+      "BehaviorHistoryItemDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "event": {
+            "enum": [
+              "RATING_RECEIVED",
+              "RATING_REVOKED",
+              "ORDER_REJECTED",
+              "ORDER_EXPIRED",
+              "ORDER_EARLY_END",
+              "REPORT_APPROVED",
+              "MANUAL_ADJUSTMENT"
+            ],
+            "type": "string"
+          },
+          "operation": {
+            "enum": [
+              "ADD",
+              "SUB"
+            ],
+            "type": "string"
+          },
+          "pointType": {
+            "enum": [
+              "POINTS",
+              "SATISFACTION"
+            ],
+            "type": "string"
+          },
+          "amount": {
+            "type": "number",
+            "description": "Absolute amount applied to the counter",
+            "minimum": 1
+          },
+          "referenceId": {
+            "type": "string",
+            "nullable": true,
+            "format": "uuid",
+            "description": "Rating, order, report or adjustment id"
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "event",
+          "operation",
+          "pointType",
+          "amount",
+          "referenceId",
+          "note",
+          "createdAt"
+        ]
+      },
+      "BehaviorHistoryPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BehaviorHistoryItemDto"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMetaDto"
+          }
+        },
+        "required": [
+          "items",
+          "meta"
+        ]
+      },
       "UserSummary": {
         "type": "object",
         "properties": {
@@ -6464,6 +6644,29 @@
           "startMinute",
           "endMinute"
         ]
+      },
+      "UpdateAvailabilityDto": {
+        "type": "object",
+        "properties": {
+          "dayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 7,
+            "description": "Monday = 1 ... Sunday = 7"
+          },
+          "startMinute": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1439,
+            "description": "Minutes from midnight"
+          },
+          "endMinute": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1440,
+            "description": "Minutes from midnight, exclusive"
+          }
+        }
       },
       "BlockedUserView": {
         "type": "object",

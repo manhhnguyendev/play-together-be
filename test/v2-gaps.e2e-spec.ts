@@ -179,6 +179,122 @@ describe('v2 capability gaps (e2e)', () => {
     expect(response.body.onTimeCount).toBeLessThanOrEqual(response.body.completedOrdersCount);
   });
 
+  it('updates an availability window in place', async () => {
+    const existing = await http.get(`${API}/users/me/availability`).set(bearer(hirer1.accessToken)).expect(200);
+    for (const window of existing.body as Array<{ id: string }>) {
+      await http
+        .delete(`${API}/users/me/availability/${window.id}`)
+        .set(bearer(hirer1.accessToken))
+        .expect(204);
+    }
+
+    await http
+      .post(`${API}/users/me/availability`)
+      .set(bearer(hirer1.accessToken))
+      .send({ dayOfWeek: 1, startMinute: 540, endMinute: 660 })
+      .expect(204);
+    const windows = await http.get(`${API}/users/me/availability`).set(bearer(hirer1.accessToken)).expect(200);
+    const monday = (windows.body as Array<{ id: string; dayOfWeek: number }>).find((item) => item.dayOfWeek === 1);
+    if (!monday) throw new Error('Monday window was not created');
+
+    const updated = await http
+      .patch(`${API}/users/me/availability/${monday.id}`)
+      .set(bearer(hirer1.accessToken))
+      .send({ endMinute: 720 })
+      .expect(200);
+    expect(updated.body).toEqual({ id: monday.id, dayOfWeek: 1, startMinute: 540, endMinute: 720 });
+
+    await http
+      .post(`${API}/users/me/availability`)
+      .set(bearer(hirer1.accessToken))
+      .send({ dayOfWeek: 1, startMinute: 780, endMinute: 840 })
+      .expect(204);
+
+    await http
+      .patch(`${API}/users/me/availability/${monday.id}`)
+      .set(bearer(hirer1.accessToken))
+      .send({ endMinute: 800 })
+      .expect(409);
+    await http
+      .patch(`${API}/users/me/availability/${monday.id}`)
+      .set(bearer(hirer1.accessToken))
+      .send({ startMinute: 800, endMinute: 700 })
+      .expect(400);
+    await http
+      .patch(`${API}/users/me/availability/00000000-0000-0000-0000-000000000000`)
+      .set(bearer(hirer1.accessToken))
+      .send({ endMinute: 700 })
+      .expect(404);
+  });
+
+  it('returns behavior history newest first', async () => {
+    await http
+      .post(`${API}/admin/users/${hirer1.user.id}/behavior`)
+      .set(bearer(admin.accessToken))
+      .send({ points: -5, satisfaction: -2, note: 'History check' })
+      .expect(200);
+
+    await http.get(`${API}/users/me/behavior/history`).expect(401);
+
+    const history = await http
+      .get(`${API}/users/me/behavior/history?pageSize=5`)
+      .set(bearer(hirer1.accessToken))
+      .expect(200);
+
+    expect(history.body.meta).toMatchObject({ page: 1, pageSize: 5 });
+    const items = history.body.items as Array<{
+      event: string;
+      operation: string;
+      pointType: string;
+      amount: number;
+      note: string | null;
+      createdAt: string;
+    }>;
+
+    expect(items.length).toBeGreaterThanOrEqual(2);
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event: 'MANUAL_ADJUSTMENT', operation: 'SUB', pointType: 'POINTS', amount: 5 }),
+        expect.objectContaining({ event: 'MANUAL_ADJUSTMENT', operation: 'SUB', pointType: 'SATISFACTION', amount: 2 }),
+      ]),
+    );
+    expect(items.slice(0, 2).every((item) => item.note === 'History check')).toBe(true);
+
+    const timestamps = items.map((item) => Date.parse(item.createdAt));
+    expect(timestamps).toEqual([...timestamps].sort((a, b) => b - a));
+  });
+
+  it('reflects the caller view on public profiles', async () => {
+    const anonymous = await http.get(`${API}/users/${player1.user.id}`).expect(200);
+    expect(anonymous.body.isBlockedByMe).toBe(false);
+    expect(anonymous.body.canHire).toBe(false);
+
+    await http
+      .post(`${API}/users/me/blocks`)
+      .set(bearer(hirer1.accessToken))
+      .send({ blockedUserId: player1.user.id })
+      .expect(204);
+
+    const asHirer = await http
+      .get(`${API}/users/${player1.user.id}`)
+      .set(bearer(hirer1.accessToken))
+      .expect(200);
+    expect(asHirer.body.isBlockedByMe).toBe(true);
+    expect(asHirer.body.canHire).toBe(false);
+
+    const asOwner = await http
+      .get(`${API}/users/${player1.user.id}`)
+      .set(bearer(player1.accessToken))
+      .expect(200);
+    expect(asOwner.body.isBlockedByMe).toBe(false);
+    expect(asOwner.body.email).toBe('demo.player1@playtogether.local');
+
+    await http
+      .delete(`${API}/users/me/blocks/${player1.user.id}`)
+      .set(bearer(hirer1.accessToken))
+      .expect(204);
+  });
+
   it('saves service pricing without forcing player mode on', async () => {
     const updated = await http
       .patch(`${API}/users/me/player-mode`)

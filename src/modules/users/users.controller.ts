@@ -32,6 +32,7 @@ import {
   FavoriteGameItemDto,
   PlayerModeDto,
   SearchPlayersQuery,
+  UpdateAvailabilityDto,
   UpdateProfileDto,
   UpdateSkillRankDto,
   UpdateStatusDto,
@@ -207,6 +208,18 @@ export class UsersController {
   @ApiNoContentResponse()
   async addAvailability(@CurrentUser() user: AuthUser, @Body() dto: CreateAvailabilityDto): Promise<void> {
     await this.users.createAvailability(user.id, dto);
+  }
+
+  @ApiBearerAuth()
+  @Patch('me/availability/:windowId')
+  @ApiOperation({ summary: 'Update an availability window' })
+  @ApiOkResponse({ type: AvailabilityWindowView })
+  updateAvailability(
+    @CurrentUser() user: AuthUser,
+    @Param('windowId', ParseUUIDPipe) windowId: string,
+    @Body() dto: UpdateAvailabilityDto,
+  ) {
+    return this.users.updateAvailability(user.id, windowId, dto);
   }
 
   @ApiBearerAuth()

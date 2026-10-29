@@ -14,6 +14,7 @@ import {
   isNull,
   lt,
   lte,
+  ne,
   or,
   sql,
   type SQL,
@@ -50,6 +51,7 @@ import type {
   FavoriteGameItemDto,
   PlayerModeDto,
   SearchPlayersQuery,
+  UpdateAvailabilityDto,
   UpdateProfileDto,
   UpsertSkillDto,
   UserProfile,
@@ -470,7 +472,53 @@ export class UsersService {
   }
 
   async createAvailability(userId: string, dto: CreateAvailabilityDto): Promise<void> {
-    if (dto.startMinute >= dto.endMinute) {
+    await this.assertAvailabilitySlot(userId, dto);
+
+    await this.db.insert(availabilityWindows).values({
+      userId,
+      dayOfWeek: dto.dayOfWeek,
+      startMinute: dto.startMinute,
+      endMinute: dto.endMinute,
+    });
+  }
+
+  async updateAvailability(
+    userId: string,
+    windowId: string,
+    dto: UpdateAvailabilityDto,
+  ): Promise<{ id: string; dayOfWeek: number; startMinute: number; endMinute: number }> {
+    const [existing] = await this.db
+      .select()
+      .from(availabilityWindows)
+      .where(and(eq(availabilityWindows.id, windowId), eq(availabilityWindows.userId, userId)))
+      .limit(1);
+
+    if (!existing) {
+      throw AppError.notFound(ErrorCode.availabilityNotFound, 'Availability window not found');
+    }
+
+    const next = {
+      dayOfWeek: dto.dayOfWeek ?? existing.dayOfWeek,
+      startMinute: dto.startMinute ?? existing.startMinute,
+      endMinute: dto.endMinute ?? existing.endMinute,
+    };
+
+    await this.assertAvailabilitySlot(userId, next, windowId);
+
+    await this.db
+      .update(availabilityWindows)
+      .set(next)
+      .where(and(eq(availabilityWindows.id, windowId), eq(availabilityWindows.userId, userId)));
+
+    return { id: windowId, ...next };
+  }
+
+  private async assertAvailabilitySlot(
+    userId: string,
+    slot: { dayOfWeek: number; startMinute: number; endMinute: number },
+    excludeWindowId?: string,
+  ): Promise<void> {
+    if (slot.startMinute >= slot.endMinute) {
       throw AppError.badRequest(ErrorCode.validationFailed, 'startMinute must be before endMinute');
     }
 
@@ -480,9 +528,10 @@ export class UsersService {
       .where(
         and(
           eq(availabilityWindows.userId, userId),
-          eq(availabilityWindows.dayOfWeek, dto.dayOfWeek),
-          lt(availabilityWindows.startMinute, dto.endMinute),
-          gt(availabilityWindows.endMinute, dto.startMinute),
+          eq(availabilityWindows.dayOfWeek, slot.dayOfWeek),
+          lt(availabilityWindows.startMinute, slot.endMinute),
+          gt(availabilityWindows.endMinute, slot.startMinute),
+          excludeWindowId ? ne(availabilityWindows.id, excludeWindowId) : undefined,
         ),
       )
       .limit(1);
@@ -490,13 +539,6 @@ export class UsersService {
     if (overlapping.length > 0) {
       throw AppError.conflict(ErrorCode.availabilityOverlap, 'This window overlaps an existing availability window');
     }
-
-    await this.db.insert(availabilityWindows).values({
-      userId,
-      dayOfWeek: dto.dayOfWeek,
-      startMinute: dto.startMinute,
-      endMinute: dto.endMinute,
-    });
   }
 
   async removeAvailability(userId: string, windowId: string): Promise<void> {
