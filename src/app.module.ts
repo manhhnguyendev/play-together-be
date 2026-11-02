@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { CommonModule } from './common/common.module';
+import { AuditModule } from './common/audit/audit.module';
 import { validateEnv } from './common/config/env';
 import { DatabaseModule } from './common/database/database.module';
 import { ProblemDetailsFilter } from './common/errors/problem-details.filter';
@@ -47,6 +48,7 @@ import { WalletModule } from './modules/wallet/wallet.module';
     }),
     DatabaseModule,
     CommonModule,
+    AuditModule,
     SecurityModule,
     SystemConfigModule,
     NotificationsModule,

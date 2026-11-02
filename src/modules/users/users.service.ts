@@ -201,13 +201,15 @@ export class UsersService {
     const user = await this.requireById(id);
 
     if (!dto.enabled) {
+      // Only a committed session blocks turning player mode off. An unanswered
+      // request does not — the player can simply let it expire.
       const [active] = await this.db
         .select({ id: orders.id })
         .from(orders)
         .where(
           and(
             eq(orders.playerId, id),
-            or(eq(orders.status, 'PROCESSING'), eq(orders.status, 'ACCEPTED')),
+            inArray(orders.status, ['SCHEDULED', 'LIVE', 'DISPUTED']),
           ),
         )
         .limit(1);
@@ -326,6 +328,12 @@ export class UsersService {
   }
 
   private playerOrderBy(sort: SearchPlayersQuery['sort']): SQL[] {
+    // Seeded players share one `createdAt` and plenty share a name or price, so
+    // the id is what keeps two pages of the same search disjoint.
+    return [...this.playerSortColumns(sort), asc(users.id)];
+  }
+
+  private playerSortColumns(sort: SearchPlayersQuery['sort']): SQL[] {
     switch (sort) {
       case 'price_asc':
         return [asc(users.pricePerHour), asc(users.name)];
@@ -667,7 +675,7 @@ export class UsersService {
         .select()
         .from(users)
         .where(where)
-        .orderBy(desc(users.createdAt))
+        .orderBy(desc(users.createdAt), desc(users.id))
         .limit(input.pageSize)
         .offset(offsetOf(input.page, input.pageSize)),
       this.db.select({ value: count() }).from(users).where(where),

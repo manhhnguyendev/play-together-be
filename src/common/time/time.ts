@@ -71,6 +71,26 @@ export function timeZoneOffsetMs(date: Date, timeZone: string): number {
   return asUtc - (date.getTime() - date.getUTCMilliseconds());
 }
 
+const pad2 = (value: number): string => value.toString().padStart(2, '0');
+
+/**
+ * User-facing date/time strings. Notification bodies are stored text shown
+ * verbatim in the Vietnamese app, so they never carry an ISO instant.
+ */
+export function formatClockInZone(date: Date, timeZone: string): string {
+  const parts = zonedParts(date, timeZone);
+  return `${pad2(parts.hour)}:${pad2(parts.minute)}`;
+}
+
+export function formatDateInZone(date: Date, timeZone: string): string {
+  const parts = zonedParts(date, timeZone);
+  return `${pad2(parts.day)}/${pad2(parts.month)}/${parts.year}`;
+}
+
+export function formatDateTimeInZone(date: Date, timeZone: string): string {
+  return `${formatClockInZone(date, timeZone)} ${formatDateInZone(date, timeZone)}`;
+}
+
 export function startOfDayInZone(date: Date, timeZone: string): Date {
   const parts = zonedParts(date, timeZone);
   const localMidnight = Date.UTC(parts.year, parts.month - 1, parts.day, 0, 0, 0, 0);
@@ -88,4 +108,49 @@ export function isWithinAvailability(
     (window) =>
       window.dayOfWeek === parts.dayOfWeek && minute >= window.startMinute && minute < window.endMinute,
   );
+}
+
+export type AvailabilityWindow = { dayOfWeek: number; startMinute: number; endMinute: number };
+
+/**
+ * Whether a whole session fits inside the windows a player published.
+ *
+ * Each window belongs to a single local day and cannot cross midnight (the
+ * table checks `start_minute < end_minute`), so a session is walked one local
+ * day at a time and every segment must sit inside one window of that day. A
+ * segment may not be stitched from two windows, because the overlap validation
+ * in `users.service` means published windows never touch.
+ */
+export function isSlotCovered(
+  start: Date,
+  end: Date,
+  windows: readonly AvailabilityWindow[],
+  timeZone: string,
+): boolean {
+  let cursor = start;
+
+  while (cursor.getTime() < end.getTime()) {
+    const parts = zonedParts(cursor, timeZone);
+    const minuteOfDay = parts.hour * 60 + parts.minute;
+
+    // A calendar day of local midnight plus 24h. Timezones that observe DST
+    // would make this a minute or two generous, which only ever makes the check
+    // stricter; the app timezone (Asia/Ho_Chi_Minh) has no DST.
+    const dayStart = startOfDayInZone(cursor, timeZone);
+    const nextMidnight = new Date(dayStart.getTime() + MS_DAY);
+    const segmentEnd = new Date(Math.min(end.getTime(), nextMidnight.getTime()));
+    const segmentMinutes = (segmentEnd.getTime() - cursor.getTime()) / MS_MINUTE;
+
+    const covered = windows.some(
+      (window) =>
+        window.dayOfWeek === parts.dayOfWeek &&
+        minuteOfDay >= window.startMinute &&
+        minuteOfDay + segmentMinutes <= window.endMinute,
+    );
+    if (!covered) return false;
+
+    cursor = segmentEnd;
+  }
+
+  return true;
 }

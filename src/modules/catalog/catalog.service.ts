@@ -1,9 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, count, desc, eq, exists, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
-import { DB, type AppDatabase } from '../../common/database/database.module';
+import { AUDIT_ACTIONS, AuditService, type AuditAction } from '../../common/audit/audit.service';
+import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
 import { offsetOf, paginated, type Paginated } from '../../common/pagination/pagination';
+import type { AuthUser } from '../../common/security/auth-user';
 import { Clock } from '../../common/time/time';
 import {
   gameRanks,
@@ -36,6 +38,7 @@ export class CatalogService {
   constructor(
     @Inject(DB) private readonly db: AppDatabase,
     private readonly clock: Clock,
+    private readonly audit: AuditService,
   ) {}
 
   async mostFavorited(limit: number): Promise<FavoriteGameDto[]> {
@@ -85,7 +88,7 @@ export class CatalogService {
         .select()
         .from(games)
         .where(where)
-        .orderBy(asc(games.name))
+        .orderBy(asc(games.name), asc(games.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(games).where(where),
@@ -128,7 +131,7 @@ export class CatalogService {
       .orderBy(asc(gameRanks.no));
   }
 
-  async createGame(dto: CreateGameDto): Promise<GameDetail> {
+  async createGame(admin: AuthUser, dto: CreateGameDto): Promise<GameDetail> {
     const typeIds = dto.gameTypeIds ?? [];
     await this.assertGameTypesExist(typeIds);
 
@@ -145,13 +148,19 @@ export class CatalogService {
       if (typeIds.length > 0) {
         await tx.insert(gameTypeLinks).values(typeIds.map((gameTypeId) => ({ gameId: created.id, gameTypeId })));
       }
+
+      await this.auditCatalog(admin, AUDIT_ACTIONS.gameCreate, 'game', created.id, {
+        name: created.name,
+        gameTypeIds: typeIds,
+      }, tx);
+
       return created;
     });
 
     return this.getGame(game.id);
   }
 
-  async updateGame(id: string, dto: UpdateGameDto): Promise<GameDetail> {
+  async updateGame(admin: AuthUser, id: string, dto: UpdateGameDto): Promise<GameDetail> {
     await this.requireGame(id);
     if (dto.gameTypeIds) await this.assertGameTypesExist(dto.gameTypeIds);
 
@@ -168,13 +177,18 @@ export class CatalogService {
           await tx.insert(gameTypeLinks).values(dto.gameTypeIds.map((gameTypeId) => ({ gameId: id, gameTypeId })));
         }
       }
+
+      await this.auditCatalog(admin, AUDIT_ACTIONS.gameUpdate, 'game', id, {
+        fields: Object.keys(dto),
+        gameTypeIds: dto.gameTypeIds,
+      }, tx);
     });
 
     return this.getGame(id);
   }
 
-  async removeGame(id: string): Promise<void> {
-    await this.requireGame(id);
+  async removeGame(admin: AuthUser, id: string): Promise<void> {
+    const game = await this.requireGame(id);
 
     const [used] = await this.db
       .select({ one: sql`1` })
@@ -190,6 +204,7 @@ export class CatalogService {
     }
 
     await this.db.delete(games).where(eq(games.id, id));
+    await this.auditCatalog(admin, AUDIT_ACTIONS.gameDelete, 'game', id, { name: game.name });
   }
 
   async listGameTypes(input: { page: number; pageSize: number; q?: string }): Promise<Paginated<GameTypeView>> {
@@ -200,7 +215,7 @@ export class CatalogService {
         .select()
         .from(gameTypes)
         .where(where)
-        .orderBy(asc(gameTypes.name))
+        .orderBy(asc(gameTypes.name), asc(gameTypes.id))
         .limit(input.pageSize)
         .offset(offsetOf(input.page, input.pageSize)),
       this.db.select({ value: count() }).from(gameTypes).where(where),
@@ -238,7 +253,7 @@ export class CatalogService {
     return { ...row, gameCount: linked.length, games: linked.map((item) => item.game) };
   }
 
-  async createGameType(dto: CreateGameTypeDto): Promise<GameTypeView> {
+  async createGameType(admin: AuthUser, dto: CreateGameTypeDto): Promise<GameTypeView> {
     const [created] = await this.db
       .insert(gameTypes)
       .values({
@@ -247,10 +262,12 @@ export class CatalogService {
         description: dto.description ?? null,
       })
       .returning();
+
+    await this.auditCatalog(admin, AUDIT_ACTIONS.gameTypeCreate, 'game_type', created.id, { name: created.name });
     return { ...created, gameCount: 0 };
   }
 
-  async updateGameType(id: string, dto: UpdateGameTypeDto): Promise<GameTypeView> {
+  async updateGameType(admin: AuthUser, id: string, dto: UpdateGameTypeDto): Promise<GameTypeView> {
     const [existing] = await this.db.select().from(gameTypes).where(eq(gameTypes.id, id)).limit(1);
     if (!existing) throw AppError.notFound(ErrorCode.gameTypeNotFound, 'Game type not found');
 
@@ -260,25 +277,40 @@ export class CatalogService {
     if (dto.description !== undefined) patch.description = dto.description;
 
     const [updated] = await this.db.update(gameTypes).set(patch).where(eq(gameTypes.id, id)).returning();
+    await this.auditCatalog(admin, AUDIT_ACTIONS.gameTypeUpdate, 'game_type', id, {
+      fields: Object.keys(dto),
+      name: updated.name,
+    });
     return this.getGameType(updated.id);
   }
 
-  async removeGameType(id: string): Promise<void> {
-    const deleted = await this.db.delete(gameTypes).where(eq(gameTypes.id, id)).returning({ id: gameTypes.id });
-    if (deleted.length === 0) throw AppError.notFound(ErrorCode.gameTypeNotFound, 'Game type not found');
+  async removeGameType(admin: AuthUser, id: string): Promise<void> {
+    const [deleted] = await this.db
+      .delete(gameTypes)
+      .where(eq(gameTypes.id, id))
+      .returning({ id: gameTypes.id, name: gameTypes.name });
+    if (!deleted) throw AppError.notFound(ErrorCode.gameTypeNotFound, 'Game type not found');
+
+    await this.auditCatalog(admin, AUDIT_ACTIONS.gameTypeDelete, 'game_type', deleted.id, { name: deleted.name });
   }
 
-  async createRank(gameId: string, dto: CreateRankDto): Promise<GameRank> {
+  async createRank(admin: AuthUser, gameId: string, dto: CreateRankDto): Promise<GameRank> {
     await this.requireGame(gameId);
 
     const [created] = await this.db
       .insert(gameRanks)
       .values({ gameId, no: dto.no, name: dto.name })
       .returning();
+
+    await this.auditCatalog(admin, AUDIT_ACTIONS.rankCreate, 'game_rank', created.id, {
+      gameId,
+      no: created.no,
+      name: created.name,
+    });
     return created;
   }
 
-  async updateRank(rankId: string, dto: UpdateRankDto): Promise<GameRank> {
+  async updateRank(admin: AuthUser, rankId: string, dto: UpdateRankDto): Promise<GameRank> {
     const [existing] = await this.db.select().from(gameRanks).where(eq(gameRanks.id, rankId)).limit(1);
     if (!existing) throw AppError.notFound(ErrorCode.rankNotFound, 'Rank not found');
 
@@ -290,10 +322,15 @@ export class CatalogService {
       })
       .where(eq(gameRanks.id, rankId))
       .returning();
+
+    await this.auditCatalog(admin, AUDIT_ACTIONS.rankUpdate, 'game_rank', rankId, {
+      before: { no: existing.no, name: existing.name },
+      after: { no: updated.no, name: updated.name },
+    });
     return updated;
   }
 
-  async removeRank(rankId: string): Promise<void> {
+  async removeRank(admin: AuthUser, rankId: string): Promise<void> {
     const [used] = await this.db
       .select({ one: sql`1` })
       .from(userSkills)
@@ -307,8 +344,36 @@ export class CatalogService {
       );
     }
 
-    const deleted = await this.db.delete(gameRanks).where(eq(gameRanks.id, rankId)).returning({ id: gameRanks.id });
-    if (deleted.length === 0) throw AppError.notFound(ErrorCode.rankNotFound, 'Rank not found');
+    const [deleted] = await this.db
+      .delete(gameRanks)
+      .where(eq(gameRanks.id, rankId))
+      .returning({ id: gameRanks.id, gameId: gameRanks.gameId, no: gameRanks.no, name: gameRanks.name });
+    if (!deleted) throw AppError.notFound(ErrorCode.rankNotFound, 'Rank not found');
+
+    await this.auditCatalog(admin, AUDIT_ACTIONS.rankDelete, 'game_rank', deleted.id, {
+      gameId: deleted.gameId,
+      no: deleted.no,
+      name: deleted.name,
+    });
+  }
+
+  /** Catalog edits change content, not money, so they are audited without a reason. */
+  private auditCatalog(
+    admin: AuthUser,
+    action: AuditAction,
+    entity: string,
+    entityId: string,
+    detail: Record<string, unknown>,
+    executor: DbExecutor = this.db,
+  ): Promise<void> {
+    return this.audit.log(executor, {
+      adminId: admin.id,
+      adminRole: admin.adminRole,
+      action,
+      entity,
+      entityId,
+      detail,
+    });
   }
 
   private async typesFor(

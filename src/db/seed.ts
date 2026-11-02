@@ -13,12 +13,14 @@ import {
   gameTypes,
   ledgerEntries,
   systemConfigs,
+  SUPER_ADMIN_ROLE,
   userFavorites,
   userHobbies,
   userSkills,
   users,
   availabilityWindows,
   wallets,
+  type AdminRole,
   type Game,
   type GameRank,
   type User,
@@ -294,6 +296,12 @@ const DEMO_HIRERS = [
   { email: 'demo.hirer2@playtogether.local', name: 'Bùi Ngọc', city: 'Hà Nội', balance: 500_000 },
 ];
 
+/** Back-office staff so the RBAC tiers can be tried out without promoting anyone by hand. */
+const DEMO_STAFF: { email: string; name: string; adminRole: AdminRole }[] = [
+  { email: 'demo.moderator@playtogether.local', name: 'Kiểm Duyệt', adminRole: 'MODERATOR' },
+  { email: 'demo.finance@playtogether.local', name: 'Tài Chính', adminRole: 'FINANCE' },
+];
+
 export async function seed(db: AppDatabase, options: SeedOptions): Promise<SeedSummary> {
   const now = options.now ?? new Date();
   const summary: SeedSummary = {
@@ -378,6 +386,7 @@ export async function seed(db: AppDatabase, options: SeedOptions): Promise<SeedS
     password: options.adminPassword,
     passwordHashRounds: options.bcryptRounds,
     role: 'ADMIN',
+    adminRole: SUPER_ADMIN_ROLE,
     now,
   });
   summary.admin = admin.created ? 'created' : 'existing';
@@ -443,6 +452,18 @@ export async function seed(db: AppDatabase, options: SeedOptions): Promise<SeedS
   await ensureDemoProfiles(db, demoPlayers, gameByName, allRanks, now);
   await ensureDemoDonation(db, demoHirers[0]?.user, charity, now);
 
+  for (const staff of DEMO_STAFF) {
+    const account = await ensureAccount(db, {
+      email: staff.email,
+      name: staff.name,
+      passwordHash: demoPasswordHash,
+      role: 'ADMIN',
+      adminRole: staff.adminRole,
+      now,
+    });
+    if (account.created) summary.demoUsers += 1;
+  }
+
   return summary;
 }
 
@@ -450,6 +471,7 @@ type AccountInput = {
   email: string;
   name: string;
   role: 'USER' | 'ADMIN' | 'CHARITY';
+  adminRole?: AdminRole;
   password?: string;
   passwordHash?: string;
   passwordHashRounds?: number;
@@ -483,6 +505,11 @@ async function ensureAccount(
     .limit(1);
 
   if (existing) {
+    // Migration 0008 backfills SUPER_ADMIN for pre-RBAC admins, but an account
+    // seeded before that column existed still needs its tier written.
+    if (input.adminRole && existing.adminRole !== input.adminRole) {
+      await db.update(users).set({ adminRole: input.adminRole }).where(eq(users.id, existing.id));
+    }
     await ensureWallet(db, existing.id, 0, input.now);
     await db.insert(behaviorPoints).values({ userId: existing.id, updatedAt: input.now }).onConflictDoNothing();
     return { user: existing, created: false };
@@ -497,6 +524,7 @@ async function ensureAccount(
       passwordHash,
       name: input.name,
       role: input.role,
+      adminRole: input.adminRole ?? null,
       status: 'ONLINE',
       isActive: true,
       isPlayer: input.isPlayer ?? false,
@@ -665,7 +693,7 @@ async function ensureDemoDonation(
         direction: 'DEBIT',
         type: 'DONATION',
         amount,
-        note: 'Seed demo donation',
+        note: 'Quyên góp dữ liệu mẫu',
         createdAt: now,
       },
       {
@@ -676,7 +704,7 @@ async function ensureDemoDonation(
         direction: 'CREDIT',
         type: 'DONATION',
         amount,
-        note: 'Seed demo donation',
+        note: 'Quyên góp dữ liệu mẫu',
         createdAt: now,
       },
     ]);
@@ -694,7 +722,7 @@ async function postDepositLedger(db: AppDatabase, walletId: string, userId: stri
       direction: 'CREDIT',
       type: 'DEPOSIT',
       amount,
-      note: 'Seed demo opening balance',
+      note: 'Số dư ban đầu (dữ liệu mẫu)',
       createdAt: now,
     },
     {
@@ -704,7 +732,7 @@ async function postDepositLedger(db: AppDatabase, walletId: string, userId: stri
       direction: 'DEBIT',
       type: 'DEPOSIT',
       amount,
-      note: 'Seed demo opening balance',
+      note: 'Số dư ban đầu (dữ liệu mẫu)',
       createdAt: now,
     },
   ]);

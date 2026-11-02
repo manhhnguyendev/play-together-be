@@ -3,9 +3,12 @@ import { and, eq, sql } from 'drizzle-orm';
 import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { rankingPointsOf } from '../../common/money/money';
 import { Clock } from '../../common/time/time';
-import { behaviorPoints, orders, ratings, users } from '../../db/schema';
+import { behaviorPoints, FINISHED_ORDER_STATUSES, orders, ratings, users } from '../../db/schema';
 
-const COUNTED_STATUSES = sql`('COMPLETED', 'ENDED_EARLY_BY_HIRER', 'ENDED_EARLY_BY_PLAYER')`;
+const COUNTED_STATUSES = sql`(${sql.join(
+  FINISHED_ORDER_STATUSES.map((status) => sql`${status}`),
+  sql`, `,
+)})`;
 
 export type RecomputedStats = {
   ratingSum: number;
@@ -42,7 +45,7 @@ export class StatsService {
       .select({
         total: sql<number>`count(*)`,
         completed: sql<number>`count(*) filter (where ${orders.status} in ${COUNTED_STATUSES})`,
-        onTime: sql<number>`count(*) filter (where ${orders.status} = 'COMPLETED'
+        onTime: sql<number>`count(*) filter (where ${orders.status} = 'SETTLED'
           and ${orders.scheduledEndAt} is not null
           and ${orders.endedAt} is not null
           and ${orders.endedAt} <= ${orders.scheduledEndAt})`,

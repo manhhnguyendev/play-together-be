@@ -11,6 +11,7 @@ type AccessTokenPayload = {
   sub: string;
   email: string;
   role: AuthUser['role'];
+  adminRole?: AuthUser['adminRole'];
 };
 
 @Injectable()
@@ -36,7 +37,14 @@ export class JwtAuthGuard implements CanActivate {
 
     try {
       const payload = await this.jwt.verifyAsync<AccessTokenPayload>(header.slice(7));
-      request.user = { id: payload.sub, email: payload.email, role: payload.role };
+      // A token minted before `admin_role` existed carries no claim, and fails
+      // closed: no console access until the pair is refreshed.
+      request.user = {
+        id: payload.sub,
+        email: payload.email,
+        role: payload.role,
+        adminRole: payload.adminRole ?? null,
+      };
       return true;
     } catch {
       if (isPublic) return true;

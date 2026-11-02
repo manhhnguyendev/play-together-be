@@ -165,6 +165,18 @@ export class AuthService {
       return this.respond(byGoogleId, userAgent);
     }
 
+    // From here the email is what identifies the account — it links to an existing
+    // player or creates a new one. An unverified Google email is somebody else's
+    // mailbox, and the password reset flow hands control of any account keyed on
+    // that address to whoever signs in with it. An account already bound to this
+    // Google subject above is exempt: the binding was made when it was verified.
+    if (!profile.emailVerified) {
+      throw AppError.badRequest(
+        ErrorCode.emailNotVerified,
+        'Verify this email address with Google before using it to sign in',
+      );
+    }
+
     const [byEmail] = await this.db
       .select()
       .from(users)

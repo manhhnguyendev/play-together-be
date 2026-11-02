@@ -23,6 +23,7 @@ import {
 } from '../../common/money/money';
 import { PageMetaDto } from '../../common/openapi/paginated.dto';
 import { PageQueryDto } from '../../common/pagination/pagination';
+import { ADMIN_ROLES, type AdminRole } from '../../db/schema';
 
 const USER_STATUSES = ['ONLINE', 'OFFLINE', 'BUSY'] as const;
 const GENDERS = ['MALE', 'FEMALE', 'OTHER'] as const;
@@ -309,6 +310,14 @@ export class UserSummary {
 
   @ApiProperty({ enum: ['USER', 'ADMIN', 'CHARITY'] })
   role: 'USER' | 'ADMIN' | 'CHARITY';
+
+  /**
+   * Back-office tier. Only present on the views that also carry the email — the
+   * account itself and administrators — so a public player card cannot reveal
+   * that the account is staff.
+   */
+  @ApiPropertyOptional({ enum: ADMIN_ROLES, nullable: true })
+  adminRole?: AdminRole | null;
 
   @ApiProperty()
   isActive: boolean;

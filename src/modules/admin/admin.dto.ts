@@ -13,6 +13,7 @@ import {
 } from 'class-validator';
 import { PageMetaDto } from '../../common/openapi/paginated.dto';
 import { PageQueryDto } from '../../common/pagination/pagination';
+import { ADMIN_ROLES, type AdminRole } from '../../db/schema';
 import { UserSummary } from '../users/users.dto';
 
 export const ADMIN_USER_ROLES = ['USER', 'ADMIN', 'CHARITY'] as const;
@@ -59,16 +60,44 @@ export class AdminUpdateUserDto {
   @IsIn(ADMIN_USER_ROLES)
   role?: (typeof ADMIN_USER_ROLES)[number];
 
+  /**
+   * Back-office tier. Send `null` to take it away, which is why this is not
+   * simply optional: omitting it leaves the current tier alone.
+   */
+  @ApiPropertyOptional({ enum: ADMIN_ROLES, nullable: true })
+  @IsOptional()
+  @IsIn([...ADMIN_ROLES, null])
+  adminRole?: AdminRole | null;
+
   @ApiPropertyOptional({ enum: ADMIN_USER_STATUSES })
   @IsOptional()
   @IsIn(ADMIN_USER_STATUSES)
   status?: (typeof ADMIN_USER_STATUSES)[number];
+
+  @ApiPropertyOptional({
+    maxLength: 500,
+    description: 'Required when locking, unlocking or changing either role',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(500)
+  reason?: string;
 }
 
 export class ToggleMaintenanceDto {
   @ApiProperty()
   @IsBoolean()
   enabled: boolean;
+
+  @ApiPropertyOptional({
+    maxLength: 500,
+    description: 'Recorded in the audit log next to the switch',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
 }
 
 export class BroadcastNotificationDto {
@@ -89,6 +118,12 @@ export class BroadcastNotificationDto {
   @IsString()
   @MaxLength(500)
   referenceUrl?: string;
+
+  @ApiProperty({ maxLength: 500, description: 'Why this is being sent; recorded in the audit log' })
+  @IsString()
+  @MinLength(3)
+  @MaxLength(500)
+  reason: string;
 }
 
 export class ListAdminFeedbackQuery extends PageQueryDto {
@@ -131,11 +166,11 @@ export class AdjustBehaviorDto {
   @Max(100)
   satisfaction: number;
 
-  @ApiPropertyOptional({ maxLength: 500 })
-  @IsOptional()
+  @ApiProperty({ maxLength: 500, description: 'Required: a manual points change needs a reason' })
   @IsString()
+  @MinLength(3)
   @MaxLength(500)
-  note?: string;
+  note: string;
 }
 
 export class AdminFeedbackAuthorDto {

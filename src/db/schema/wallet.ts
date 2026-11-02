@@ -30,14 +30,12 @@ export const wallets = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     availableBalance: bigint('available_balance', { mode: 'number' }).notNull().default(0),
-    pendingBalance: bigint('pending_balance', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex('wallets_user_key').on(t.userId),
     check('wallets_available_check', sql`${t.availableBalance} >= 0`),
-    check('wallets_pending_check', sql`${t.pendingBalance} >= 0`),
   ],
 );
 
@@ -156,9 +154,15 @@ export const withdrawals = pgTable(
     note: varchar('note', { length: 255 }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     processedAt: timestamp('processed_at', { withTimezone: true, mode: 'date' }),
+    processedBy: uuid('processed_by').references(() => users.id, { onDelete: 'set null' }),
   },
   (t) => [
     index('withdrawals_user_idx').on(t.userId, t.createdAt),
+    // A payout callback delivered twice must not pay twice. Deposits have the
+    // same guard; without it the second delivery is just another PAID row.
+    uniqueIndex('withdrawals_provider_txn_key')
+      .on(t.provider, t.providerTxnId)
+      .where(sql`${t.providerTxnId} is not null`),
     check('withdrawals_amount_check', sql`${t.amount} > 0`),
   ],
 );

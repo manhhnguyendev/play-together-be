@@ -32,9 +32,23 @@ export class CreateConfigDto {
   @IsString()
   @MaxLength(1000)
   description?: string;
+
+  @ApiPropertyOptional({ maxLength: 500, description: 'Why the value changed; kept in the audit log' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
 }
 
 export class UpdateConfigDto extends PartialType(CreateConfigDto) {}
+
+export class DeleteConfigDto {
+  @ApiPropertyOptional({ maxLength: 500, description: 'Why the entry was removed; kept in the audit log' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
 
 export class ResolvedConfigDto {
   @ApiProperty({ format: 'uuid', nullable: true, description: 'Null when the value comes from defaults' })

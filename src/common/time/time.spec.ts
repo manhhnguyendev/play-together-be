@@ -1,4 +1,15 @@
-import { addHours, addMinutes, isWithinAvailability, MS_HOUR, MS_MINUTE, startOfDayInZone, zonedParts } from './time';
+import {
+  addHours,
+  addMinutes,
+  formatClockInZone,
+  formatDateInZone,
+  formatDateTimeInZone,
+  isWithinAvailability,
+  MS_HOUR,
+  MS_MINUTE,
+  startOfDayInZone,
+  zonedParts,
+} from './time';
 
 const HCM = 'Asia/Ho_Chi_Minh';
 
@@ -36,5 +47,19 @@ describe('time helpers', () => {
     expect(
       isWithinAvailability(new Date('2026-01-15T12:00:00.000Z'), [{ ...evening[0], dayOfWeek: 5 }], HCM),
     ).toBe(false);
+  });
+});
+
+describe('user-facing date formats', () => {
+  it('renders the instant as local clock and day/month/year', () => {
+    // 11:00 UTC is 18:00 in Ho Chi Minh City, the same calendar day.
+    expect(formatDateTimeInZone(new Date('2026-11-02T11:00:00.000Z'), HCM)).toBe('18:00 02/11/2026');
+    expect(formatClockInZone(new Date('2026-11-02T11:05:00.000Z'), HCM)).toBe('18:05');
+    expect(formatDateInZone(new Date('2026-11-02T11:00:00.000Z'), HCM)).toBe('02/11/2026');
+  });
+
+  it('rolls the date over when the offset crosses midnight', () => {
+    // 17:00 UTC is already the next day locally (00:00 on the 3rd).
+    expect(formatDateTimeInZone(new Date('2026-11-02T17:00:00.000Z'), HCM)).toBe('00:00 03/11/2026');
   });
 });

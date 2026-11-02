@@ -39,12 +39,20 @@ export class BackgroundJobs implements OnModuleInit, OnApplicationShutdown {
     this.timer = null;
   }
 
-  async runOnce(): Promise<{ expired: number; completed: number; released: number }> {
+  async runOnce(): Promise<{
+    expired: number;
+    started: number;
+    disputed: number;
+    completed: number;
+    released: number;
+  }> {
     const expired = await this.orders.expireDue();
-    const completed = await this.orders.autoCompleteDue();
+    const started = await this.orders.startDueSessions();
+    const disputed = await this.orders.openDisputeWindow();
+    const completed = await this.orders.settleDueDisputes();
     const released = await this.wallet.releaseDuePendingCredits();
     await this.tokens.purgeExpired();
-    return { expired, completed, released };
+    return { expired, started, disputed, completed, released };
   }
 
   private async tick(): Promise<void> {
@@ -52,9 +60,10 @@ export class BackgroundJobs implements OnModuleInit, OnApplicationShutdown {
     this.running = true;
     try {
       const result = await this.runOnce();
-      if (result.expired || result.completed || result.released) {
+      if (result.expired || result.started || result.disputed || result.completed || result.released) {
         this.logger.log(
-          `jobs: expired=${result.expired} completed=${result.completed} released=${result.released}`,
+          `jobs: expired=${result.expired} started=${result.started} disputed=${result.disputed} ` +
+            `completed=${result.completed} released=${result.released}`,
         );
       }
     } catch (error) {

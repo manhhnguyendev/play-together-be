@@ -1,19 +1,24 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, count, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, ilike, ne, or, sql, type SQL } from 'drizzle-orm';
+import { AuditService, AUDIT_ACTIONS } from '../../common/audit/audit.service';
 import { DB, type AppDatabase } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
 import { offsetOf, paginated, type Paginated } from '../../common/pagination/pagination';
+import type { AuthUser } from '../../common/security/auth-user';
 import { TokenService } from '../../common/security/token.service';
 import { Clock } from '../../common/time/time';
 import {
   charityWithdrawals,
   donations,
   feedback,
+  FINISHED_ORDER_STATUSES,
   ledgerEntries,
   orders,
   ratings,
   reports,
+  SESSION_ORDER_STATUSES,
+  SUPER_ADMIN_ROLE,
   users,
   withdrawals,
 } from '../../db/schema';
@@ -30,6 +35,7 @@ import { WalletService } from '../wallet/wallet.service';
 import type {
   AdminFeedbackView,
   AdminUpdateUserDto,
+  BroadcastNotificationDto,
   ListAdminFeedbackQuery,
   ListAdminUsersQuery,
   PlatformOverview,
@@ -48,6 +54,7 @@ export class AdminService {
     private readonly notifications: NotificationsService,
     private readonly configs: SystemConfigService,
     private readonly tokens: TokenService,
+    private readonly audit: AuditService,
     private readonly clock: Clock,
   ) {}
 
@@ -108,8 +115,11 @@ export class AdminService {
       orders: {
         total: totalOrders,
         byStatus,
-        active: (byStatus.PROCESSING ?? 0) + (byStatus.ACCEPTED ?? 0),
-        completed: byStatus.COMPLETED ?? 0,
+        // Summed from the shared status groups. Reading `byStatus.PROCESSING`
+        // by name would have kept compiling after the rename and just reported
+        // zero active orders forever.
+        active: SESSION_ORDER_STATUSES.reduce((sum, status) => sum + (byStatus[status] ?? 0), 0),
+        completed: FINISHED_ORDER_STATUSES.reduce((sum, status) => sum + (byStatus[status] ?? 0), 0),
       },
       money: {
         platformFees: Number(feeRow?.value ?? 0),
@@ -137,28 +147,85 @@ export class AdminService {
     });
   }
 
-  async updateUser(adminId: string, userId: string, dto: AdminUpdateUserDto): Promise<UserSummary> {
+  async updateUser(admin: AuthUser, userId: string, dto: AdminUpdateUserDto): Promise<UserSummary> {
     const user = await this.usersService.requireById(userId);
 
-    if (userId === adminId) {
-      if (dto.isActive === false) throw AppError.badRequest(ErrorCode.forbidden, 'You cannot lock your own account');
-      if (dto.role && dto.role !== 'ADMIN') {
-        throw AppError.badRequest(ErrorCode.forbidden, 'You cannot remove your own admin role');
-      }
+    const nextRole = dto.role ?? user.role;
+    const nextAdminRole = dto.adminRole === undefined ? user.adminRole : dto.adminRole;
+    const nextActive = dto.isActive ?? user.isActive;
+
+    const locks = dto.isActive === false && user.isActive;
+    const unlocks = dto.isActive === true && !user.isActive;
+    const changedRole = dto.role !== undefined && dto.role !== user.role;
+    const changedAdminRole = dto.adminRole !== undefined && dto.adminRole !== user.adminRole;
+
+    if (userId === admin.id && locks) {
+      throw AppError.badRequest(ErrorCode.forbidden, 'You cannot lock your own account');
+    }
+    if (userId === admin.id && changedRole && dto.role !== 'ADMIN') {
+      throw AppError.badRequest(ErrorCode.forbidden, 'You cannot remove your own admin role');
+    }
+    // Which tier an account holds, and whether it is an administrator at all,
+    // is the privilege this console exists to hand out. A moderator who could
+    // move those fields could hand themselves any tier, so only the tier that
+    // appoints its own may change them.
+    if ((changedRole || changedAdminRole) && admin.adminRole !== SUPER_ADMIN_ROLE) {
+      throw AppError.forbidden(
+        ErrorCode.adminRoleRequired,
+        'Only a super admin can change an account role or back-office tier',
+      );
+    }
+    if (nextAdminRole && nextRole !== 'ADMIN') {
+      throw AppError.unprocessable(
+        ErrorCode.validationFailed,
+        'A back-office role can only sit on an account whose role is ADMIN',
+      );
+    }
+    // Everything except a presence tweak is a privilege change, and the console
+    // has to say why it made it.
+    if ((locks || unlocks || changedRole || changedAdminRole) && !dto.reason?.trim()) {
+      throw AppError.unprocessable(
+        ErrorCode.reasonRequired,
+        'A reason is required when locking an account or changing its roles',
+      );
     }
 
-    if (user.role === 'ADMIN' && dto.role && dto.role !== 'ADMIN') {
+    if (user.role === 'ADMIN' && changedRole && dto.role !== 'ADMIN') {
       const [row] = await this.db
         .select({ value: count() })
         .from(users)
-        .where(and(eq(users.role, 'ADMIN'), eq(users.isActive, true)));
-      if (Number(row?.value ?? 0) <= 1) {
+        .where(and(eq(users.role, 'ADMIN'), eq(users.isActive, true), ne(users.id, userId)));
+      if (Number(row?.value ?? 0) <= 0) {
         throw AppError.conflict(ErrorCode.conflict, 'At least one active administrator must remain');
       }
     }
 
-    const nextActive = dto.isActive ?? user.isActive;
-    const nextRole = dto.role ?? user.role;
+    // The tier that can appoint another of its own must never be wiped out —
+    // not by demotion, not by locking the account, not by demoting and locking
+    // in one call.
+    if (
+      user.adminRole === SUPER_ADMIN_ROLE &&
+      user.isActive &&
+      !(nextAdminRole === SUPER_ADMIN_ROLE && nextActive)
+    ) {
+      const [remaining] = await this.db
+        .select({ value: count() })
+        .from(users)
+        .where(
+          and(
+            eq(users.adminRole, SUPER_ADMIN_ROLE),
+            eq(users.isActive, true),
+            ne(users.id, userId),
+          ),
+        );
+      if (Number(remaining?.value ?? 0) <= 0) {
+        throw AppError.conflict(
+          ErrorCode.lastSuperAdmin,
+          'At least one active super admin must remain',
+        );
+      }
+    }
+
     const nextPlayer = dto.isPlayer ?? (nextRole === 'USER' ? user.isPlayer : false);
     const nextStatus = !nextActive ? 'OFFLINE' : (dto.status ?? user.status);
 
@@ -168,7 +235,7 @@ export class AdminService {
           tx,
           userId,
           'Account locked by an administrator',
-          adminId,
+          admin.id,
           this.clock.now(),
         );
       }
@@ -179,10 +246,36 @@ export class AdminService {
           isActive: nextActive,
           isPlayer: nextPlayer,
           role: nextRole,
+          adminRole: nextAdminRole,
           status: nextStatus,
           updatedAt: this.clock.now(),
         })
         .where(eq(users.id, userId));
+
+      await this.audit.log(tx, {
+        adminId: admin.id,
+        adminRole: admin.adminRole,
+        action: AUDIT_ACTIONS.userUpdate,
+        entity: 'user',
+        entityId: userId,
+        reason: dto.reason,
+        detail: {
+          before: {
+            isActive: user.isActive,
+            role: user.role,
+            adminRole: user.adminRole,
+            status: user.status,
+            isPlayer: user.isPlayer,
+          },
+          after: {
+            isActive: nextActive,
+            role: nextRole,
+            adminRole: nextAdminRole,
+            status: nextStatus,
+            isPlayer: nextPlayer,
+          },
+        },
+      });
     });
 
     if (!nextActive && user.isActive) {
@@ -193,16 +286,26 @@ export class AdminService {
     return toUserSummary(updated, { includeEmail: true });
   }
 
-  async adjustBehavior(adminId: string, userId: string, points: number, satisfaction: number, note?: string) {
+  async adjustBehavior(
+    admin: AuthUser,
+    userId: string,
+    points: number,
+    satisfaction: number,
+    note: string,
+  ) {
     await this.usersService.requireById(userId);
-    await this.behavior.adjust(
-      this.db,
-      userId,
-      'MANUAL_ADJUSTMENT',
-      { points, satisfaction },
-      undefined,
-      note ?? `Adjusted by administrator ${adminId}`,
-    );
+    await this.db.transaction(async (tx) => {
+      await this.behavior.adjust(tx, userId, 'MANUAL_ADJUSTMENT', { points, satisfaction }, undefined, note);
+      await this.audit.log(tx, {
+        adminId: admin.id,
+        adminRole: admin.adminRole,
+        action: AUDIT_ACTIONS.userBehavior,
+        entity: 'user',
+        entityId: userId,
+        reason: note,
+        detail: { points, satisfaction },
+      });
+    });
     const recomputed = await this.stats.recompute(userId);
     return { userId, ...recomputed };
   }
@@ -222,7 +325,7 @@ export class AdminService {
         .from(feedback)
         .innerJoin(users, eq(users.id, feedback.userId))
         .where(where)
-        .orderBy(desc(feedback.createdAt))
+        .orderBy(desc(feedback.createdAt), desc(feedback.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(feedback).where(where),
@@ -247,7 +350,7 @@ export class AdminService {
     );
   }
 
-  async resolveFeedback(adminId: string, feedbackId: string, dto: ResolveFeedbackDto): Promise<AdminFeedbackView> {
+  async resolveFeedback(admin: AuthUser, feedbackId: string, dto: ResolveFeedbackDto): Promise<AdminFeedbackView> {
     const entry = await this.db.transaction(async (tx) => {
       const [row] = await tx.select().from(feedback).where(eq(feedback.id, feedbackId)).for('update');
       if (!row) throw AppError.notFound(ErrorCode.feedbackNotFound, 'Feedback not found');
@@ -261,7 +364,7 @@ export class AdminService {
         .set({
           status: dto.decision,
           adminNote: dto.adminNote ?? null,
-          resolvedBy: adminId,
+          resolvedBy: admin.id,
           resolvedAt: now,
           updatedAt: now,
         })
@@ -270,9 +373,19 @@ export class AdminService {
 
       await this.notifications.send(tx, {
         userId: updated.userId,
-        title: dto.decision === 'APPROVED' ? 'Feedback acknowledged' : 'Feedback closed',
-        body: dto.adminNote ?? 'Thank you for helping us improve PlayTogether.',
+        title: dto.decision === 'APPROVED' ? 'Đã phản hồi góp ý' : 'Đã đóng góp ý',
+        body: dto.adminNote ?? 'Cảm ơn bạn đã giúp PlayTogether tốt hơn.',
         referenceUrl: '/feedback/me',
+      });
+
+      await this.audit.log(tx, {
+        adminId: admin.id,
+        adminRole: admin.adminRole,
+        action: AUDIT_ACTIONS.feedbackResolve,
+        entity: 'feedback',
+        entityId: feedbackId,
+        reason: dto.adminNote,
+        detail: { decision: dto.decision, authorId: updated.userId },
       });
 
       return updated;
@@ -298,26 +411,45 @@ export class AdminService {
     };
   }
 
-  broadcast(title: string, body: string, referenceUrl?: string): Promise<{ recipients: number }> {
-    return this.notifications.broadcast(title, body, referenceUrl).then((recipients) => ({ recipients }));
+  async broadcast(admin: AuthUser, dto: BroadcastNotificationDto): Promise<{ recipients: number }> {
+    const recipients = await this.notifications.broadcast(dto.title, dto.body, dto.referenceUrl);
+    await this.audit.logOwn({
+      adminId: admin.id,
+      adminRole: admin.adminRole,
+      action: AUDIT_ACTIONS.broadcast,
+      entity: 'notification',
+      reason: dto.reason,
+      detail: { title: dto.title, recipients },
+    });
+    return { recipients };
   }
 
-  async setMaintenance(enabled: boolean): Promise<{ enabled: boolean }> {
+  async setMaintenance(admin: AuthUser, enabled: boolean, reason?: string): Promise<{ enabled: boolean }> {
     const key = CONFIG_KEYS.maintenanceMode;
     const row = await this.configs.getRaw(key);
 
     if (row) {
-      await this.configs.update(row.id, { value: enabled ? 1 : 0 });
+      await this.configs.update(admin, row.id, { value: enabled ? 1 : 0, reason });
     } else {
       const preset = CONFIG_DEFAULTS[key];
-      await this.configs.create({
+      await this.configs.create(admin, {
         key,
         no: preset.no,
         title: preset.title,
         value: enabled ? 1 : 0,
         description: preset.description,
+        reason,
       });
     }
+
+    await this.audit.logOwn({
+      adminId: admin.id,
+      adminRole: admin.adminRole,
+      action: AUDIT_ACTIONS.maintenance,
+      entity: 'system',
+      reason,
+      detail: { enabled },
+    });
 
     return { enabled };
   }
@@ -326,7 +458,7 @@ export class AdminService {
     return this.wallet.adminListWithdrawals(query);
   }
 
-  resolveWithdrawal(id: string, status: 'PAID' | 'REJECTED', note?: string) {
-    return this.wallet.resolveWithdrawal(id, status, note);
+  resolveWithdrawal(admin: AuthUser, id: string, status: 'PAID' | 'REJECTED', note: string) {
+    return this.wallet.resolveWithdrawal(id, status, note, admin);
   }
 }

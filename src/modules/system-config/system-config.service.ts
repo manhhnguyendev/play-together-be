@@ -1,8 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { asc, eq, sql } from 'drizzle-orm';
+import { AUDIT_ACTIONS, AuditService } from '../../common/audit/audit.service';
 import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
+import type { AuthUser } from '../../common/security/auth-user';
 import { Clock, MS_MINUTE } from '../../common/time/time';
 import { CONFIG_DEFAULTS, CONFIG_KEYS, systemConfigs, type SystemConfig } from '../../db/schema';
 import type { CreateConfigDto, PublicConfigDto, ResolvedConfigDto, UpdateConfigDto } from './config.dto';
@@ -17,6 +19,7 @@ export class SystemConfigService {
   constructor(
     @Inject(DB) private readonly db: AppDatabase,
     private readonly clock: Clock,
+    private readonly audit: AuditService,
   ) {}
 
   async all(force = false): Promise<SystemConfig[]> {
@@ -84,7 +87,9 @@ export class SystemConfigService {
     };
   }
 
-  async create(dto: CreateConfigDto): Promise<ResolvedConfigDto> {
+  async create(admin: AuthUser, dto: CreateConfigDto): Promise<ResolvedConfigDto> {
+    this.assertInRange(dto.key, dto.value);
+
     const [existing] = await this.db
       .select({ id: systemConfigs.id })
       .from(systemConfigs)
@@ -107,11 +112,23 @@ export class SystemConfigService {
       .returning();
 
     this.invalidate();
+    await this.audit.logOwn({
+      adminId: admin.id,
+      adminRole: admin.adminRole,
+      action: AUDIT_ACTIONS.configCreate,
+      entity: 'config',
+      entityId: created.id,
+      reason: dto.reason,
+      detail: { key: created.key, value: created.value },
+    });
     return this.toResolved(created);
   }
 
-  async update(id: string, dto: UpdateConfigDto): Promise<ResolvedConfigDto> {
-    await this.requireById(id);
+  async update(admin: AuthUser, id: string, dto: UpdateConfigDto): Promise<ResolvedConfigDto> {
+    const current = await this.requireById(id);
+    if (dto.value !== undefined) {
+      this.assertInRange(dto.key ?? current.key, dto.value);
+    }
 
     const patch: Partial<typeof systemConfigs.$inferInsert> = { updatedAt: this.clock.now() };
     if (dto.key !== undefined) patch.key = dto.key;
@@ -122,21 +139,56 @@ export class SystemConfigService {
 
     const [updated] = await this.db.update(systemConfigs).set(patch).where(eq(systemConfigs.id, id)).returning();
     this.invalidate();
+    await this.audit.logOwn({
+      adminId: admin.id,
+      adminRole: admin.adminRole,
+      action: AUDIT_ACTIONS.configUpdate,
+      entity: 'config',
+      entityId: updated.id,
+      reason: dto.reason,
+      detail: { key: updated.key, before: current.value, after: updated.value },
+    });
     return this.toResolved(updated);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(admin: AuthUser, id: string, reason?: string): Promise<void> {
     const row = await this.requireById(id);
     if (Object.values(CONFIG_KEYS).includes(row.key as never)) {
       throw AppError.badRequest(ErrorCode.configNotFound, 'Core configuration entries cannot be deleted, update them instead');
     }
     await this.db.delete(systemConfigs).where(eq(systemConfigs.id, id));
     this.invalidate();
+    await this.audit.logOwn({
+      adminId: admin.id,
+      adminRole: admin.adminRole,
+      action: AUDIT_ACTIONS.configDelete,
+      entity: 'config',
+      entityId: row.id,
+      reason,
+      detail: { key: row.key, value: row.value },
+    });
   }
 
   invalidate(): void {
     this.cache = null;
     this.cachedAt = 0;
+  }
+
+  /**
+   * Bounds are declared per key in CONFIG_DEFAULTS because the column itself
+   * only knows `value >= 0`. Without this, a fee of 10000 saves cleanly here and
+   * then fails the `orders.fee_bps between 0 and 5000` CHECK on every order.
+   */
+  private assertInRange(key: string, value: number): void {
+    const preset = CONFIG_DEFAULTS[key];
+    if (!preset) return;
+    if (value < preset.min || value > preset.max) {
+      throw AppError.unprocessable(
+        ErrorCode.validationFailed,
+        `"${key}" must be between ${preset.min} and ${preset.max}`,
+        { key, value, min: preset.min, max: preset.max },
+      );
+    }
   }
 
   private toResolved(row: SystemConfig): ResolvedConfigDto {

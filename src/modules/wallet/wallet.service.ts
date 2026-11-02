@@ -1,17 +1,20 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, asc, count, desc, eq, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
+import { AuditService, AUDIT_ACTIONS } from '../../common/audit/audit.service';
 import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
 import { assertPositiveVnd, splitFee } from '../../common/money/money';
 import { offsetOf, paginated, type Paginated } from '../../common/pagination/pagination';
+import type { AuthUser } from '../../common/security/auth-user';
 import { addHours, Clock, startOfDayInZone, timeZoneOffsetMs, zonedParts } from '../../common/time/time';
 import {
   deposits,
   escrowHolds,
   ledgerEntries,
+  orders,
   pendingCredits,
   users,
   wallets,
@@ -31,6 +34,27 @@ import type {
   WithdrawalResolutionDto,
   WithdrawalView,
 } from './wallet.dto';
+
+/**
+ * Ledger `note` is copy, not a key: nothing in the system reads it back, both
+ * consoles print it verbatim, and the mobile app derives its own row title from
+ * the ledger `type`. So it is written in Vietnamese here — the language the
+ * person reading the money trail actually speaks.
+ */
+export const LEDGER_NOTES = {
+  deposit: 'Nạp tiền qua MoMo',
+  withdrawalRequest: 'Yêu cầu rút tiền',
+  withdrawalRejected: 'Rút tiền bị từ chối, đã hoàn về ví',
+  withdrawalCancelled: 'Rút tiền bị huỷ, đã hoàn về ví',
+  escrowHold: 'Tạm giữ tiền cho đơn thuê',
+  escrowRefund: 'Hoàn phần tiền thuê chưa dùng cho người thuê',
+  escrowReleased: 'Giải ngân tiền đơn thuê',
+  orderEarning: 'Doanh thu đơn thuê (chờ về ví)',
+  platformFee: 'Phí nền tảng',
+  reportRefund: 'Hoàn tiền cho người thuê vì tố cáo đúng',
+  reportClawback: 'Thu hồi tiền từ người chơi',
+  reportCompensation: 'Bồi hoàn cho người thuê vì tố cáo đúng',
+} as const;
 
 export type LedgerEntryInput = {
   accountType: 'USER' | 'CHARITY' | 'PLATFORM' | 'ESCROW' | 'EXTERNAL';
@@ -71,6 +95,7 @@ export class WalletService {
     private readonly momo: MomoAdapter,
     private readonly clock: Clock,
     private readonly config: ConfigService,
+    private readonly audit: AuditService,
   ) {}
 
   async getOrCreateWallet(executor: DbExecutor, userId: string): Promise<Wallet> {
@@ -94,6 +119,67 @@ export class WalletService {
     const wallet = await this.getOrCreateWallet(executor, userId);
     const [locked] = await executor.select().from(wallets).where(eq(wallets.id, wallet.id)).for('update');
     return locked;
+  }
+
+  /**
+   * Adds to a wallet's available balance in SQL.
+   *
+   * Balances used to be read from a locked row, added to in JavaScript and
+   * written back. That is only safe while every caller remembers the lock, and
+   * nothing here makes them remember.
+   */
+  private async addToAvailable(tx: DbExecutor, walletId: string, amount: number): Promise<number> {
+    assertPositiveVnd(amount, 'amount');
+
+    const [row] = await tx
+      .update(wallets)
+      .set({ availableBalance: sql`${wallets.availableBalance} + ${amount}`, updatedAt: this.clock.now() })
+      .where(eq(wallets.id, walletId))
+      .returning({ availableBalance: wallets.availableBalance });
+
+    if (!row) throw AppError.notFound(ErrorCode.notFound, 'Wallet not found');
+    return row.availableBalance;
+  }
+
+  /**
+   * Debits the available balance in SQL, and only if it covers the amount.
+   * Returns null rather than throwing so each caller names its own failure: an
+   * escrow hold and a withdrawal report the same shortfall to different people.
+   */
+  private async tryDebitAvailable(tx: DbExecutor, walletId: string, amount: number): Promise<number | null> {
+    assertPositiveVnd(amount, 'amount');
+
+    const [row] = await tx
+      .update(wallets)
+      .set({ availableBalance: sql`${wallets.availableBalance} - ${amount}`, updatedAt: this.clock.now() })
+      .where(and(eq(wallets.id, walletId), gte(wallets.availableBalance, amount)))
+      .returning({ availableBalance: wallets.availableBalance });
+
+    return row ? row.availableBalance : null;
+  }
+
+  /**
+   * Debits a wallet the caller has already locked. No guard here: the caller
+   * worked out the affordable amount from the locked row, and
+   * `wallets_available_check` rejects the transaction if that arithmetic was
+   * ever wrong.
+   */
+  private async debitLocked(tx: DbExecutor, walletId: string, amount: number): Promise<void> {
+    assertPositiveVnd(amount, 'amount');
+    await tx
+      .update(wallets)
+      .set({ availableBalance: sql`${wallets.availableBalance} - ${amount}`, updatedAt: this.clock.now() })
+      .where(eq(wallets.id, walletId));
+  }
+
+  /** Un-released earnings are the only definition of "pending". */
+  private async pendingTotal(executor: DbExecutor, walletId: string): Promise<number> {
+    const [row] = await executor
+      .select({ total: sql<number>`coalesce(sum(${pendingCredits.amount}), 0)` })
+      .from(pendingCredits)
+      .where(and(eq(pendingCredits.walletId, walletId), isNull(pendingCredits.releasedAt)));
+
+    return Number(row?.total ?? 0);
   }
 
   /** Append a balanced group of ledger rows under one transaction id. */
@@ -131,7 +217,7 @@ export class WalletService {
     return {
       walletId: wallet.id,
       availableBalance: wallet.availableBalance,
-      pendingBalance: wallet.pendingBalance,
+      pendingBalance: await this.pendingTotal(this.db, wallet.id),
       pendingCredits: credits.map((credit) => ({
         id: credit.id,
         orderId: credit.orderId,
@@ -188,7 +274,7 @@ export class WalletService {
         .select()
         .from(ledgerEntries)
         .where(where)
-        .orderBy(desc(ledgerEntries.createdAt))
+        .orderBy(desc(ledgerEntries.createdAt), desc(ledgerEntries.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(ledgerEntries).where(where),
@@ -218,7 +304,7 @@ export class WalletService {
         .select()
         .from(deposits)
         .where(where)
-        .orderBy(desc(deposits.createdAt))
+        .orderBy(desc(deposits.createdAt), desc(deposits.id))
         .limit(pageSize)
         .offset(offsetOf(page, pageSize)),
       this.db.select({ value: count() }).from(deposits).where(where),
@@ -250,7 +336,7 @@ export class WalletService {
         .select()
         .from(withdrawals)
         .where(where)
-        .orderBy(desc(withdrawals.createdAt))
+        .orderBy(desc(withdrawals.createdAt), desc(withdrawals.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(withdrawals).where(where),
@@ -299,7 +385,12 @@ export class WalletService {
         mock: payment.mock,
       };
     } catch (error) {
-      await this.db.delete(deposits).where(eq(deposits.id, deposit.id));
+      // The deposit id is what the payment provider's webhook refers back to.
+      // Deleting the row here leaves an inbound callback with nothing to match.
+      await this.db
+        .update(deposits)
+        .set({ status: 'FAILED' })
+        .where(eq(deposits.id, deposit.id));
       throw error;
     }
   }
@@ -363,16 +454,11 @@ export class WalletService {
     }
     if (deposit.status === 'SUCCEEDED') return deposit;
     if (deposit.status === 'FAILED') {
-      throw AppError.conflict(ErrorCode.invalidOrderState, 'This deposit has already failed');
+      throw AppError.conflict(ErrorCode.depositAlreadySettled, 'This deposit has already failed');
     }
 
-    const [wallet] = await tx.select().from(wallets).where(eq(wallets.id, deposit.walletId)).for('update');
     const now = this.clock.now();
-
-    await tx
-      .update(wallets)
-      .set({ availableBalance: wallet.availableBalance + deposit.amount, updatedAt: now })
-      .where(eq(wallets.id, wallet.id));
+    await this.addToAvailable(tx, deposit.walletId, deposit.amount);
 
     const [updated] = await tx
       .update(deposits)
@@ -387,16 +473,16 @@ export class WalletService {
         direction: 'DEBIT',
         type: 'DEPOSIT',
         amount: deposit.amount,
-        note: 'Top-up via MoMo',
+        note: LEDGER_NOTES.deposit,
       },
       {
         accountType: 'USER',
         accountId: deposit.userId,
-        walletId: wallet.id,
+        walletId: deposit.walletId,
         direction: 'CREDIT',
         type: 'DEPOSIT',
         amount: deposit.amount,
-        note: 'Top-up via MoMo',
+        note: LEDGER_NOTES.deposit,
       },
     ]);
 
@@ -407,13 +493,7 @@ export class WalletService {
     assertPositiveVnd(dto.amount, 'amount');
 
     return this.db.transaction(async (tx) => {
-      const wallet = await this.lockWallet(tx, userId);
-      if (wallet.availableBalance < dto.amount) {
-        throw AppError.badRequest(
-          ErrorCode.insufficientBalance,
-          'Your available balance is lower than the requested withdrawal amount',
-        );
-      }
+      const wallet = await this.getOrCreateWallet(tx, userId);
 
       const [pending] = await tx
         .select({ id: withdrawals.id })
@@ -428,15 +508,17 @@ export class WalletService {
         );
       }
 
+      if ((await this.tryDebitAvailable(tx, wallet.id, dto.amount)) === null) {
+        throw AppError.badRequest(
+          ErrorCode.insufficientBalance,
+          'Your available balance is lower than the requested withdrawal amount',
+        );
+      }
+
       const [row] = await tx
         .insert(withdrawals)
         .values({ userId, walletId: wallet.id, amount: dto.amount, provider: 'MOMO', note: dto.note ?? null })
         .returning();
-
-      await tx
-        .update(wallets)
-        .set({ availableBalance: wallet.availableBalance - dto.amount, updatedAt: this.clock.now() })
-        .where(eq(wallets.id, wallet.id));
 
       await this.post(tx, [
         {
@@ -446,7 +528,7 @@ export class WalletService {
           direction: 'DEBIT',
           type: 'WITHDRAWAL',
           amount: dto.amount,
-          note: dto.note ?? 'Withdrawal request',
+          note: dto.note ?? LEDGER_NOTES.withdrawalRequest,
         },
         {
           accountType: 'EXTERNAL',
@@ -454,7 +536,7 @@ export class WalletService {
           direction: 'CREDIT',
           type: 'WITHDRAWAL',
           amount: dto.amount,
-          note: dto.note ?? 'Withdrawal request',
+          note: dto.note ?? LEDGER_NOTES.withdrawalRequest,
         },
       ]);
 
@@ -471,7 +553,7 @@ export class WalletService {
         .from(withdrawals)
         .innerJoin(users, eq(users.id, withdrawals.userId))
         .where(where)
-        .orderBy(desc(withdrawals.createdAt))
+        .orderBy(desc(withdrawals.createdAt), desc(withdrawals.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(withdrawals).where(where),
@@ -496,7 +578,8 @@ export class WalletService {
   async resolveWithdrawal(
     id: string,
     status: 'PAID' | 'REJECTED',
-    note?: string,
+    note: string,
+    admin: AuthUser,
   ): Promise<WithdrawalResolutionDto> {
     return this.db.transaction(async (tx) => {
       const [withdrawal] = await tx.select().from(withdrawals).where(eq(withdrawals.id, id)).for('update');
@@ -506,18 +589,38 @@ export class WalletService {
       }
 
       const now = this.clock.now();
+      let outcome: WithdrawalResolutionDto;
 
       if (status === 'PAID') {
         const [updated] = await tx
           .update(withdrawals)
-          .set({ status: 'PAID', note: note ?? withdrawal.note, processedAt: now })
+          .set({
+            status: 'PAID',
+            note,
+            processedAt: now,
+            processedBy: admin.id,
+          })
           .where(eq(withdrawals.id, id))
           .returning();
-        return { id: updated.id, status: updated.status };
+        outcome = { id: updated.id, status: updated.status };
+      } else {
+        await this.refundWithdrawal(tx, withdrawal, 'REJECTED', note, now, admin.id);
+        outcome = { id: withdrawal.id, status: 'REJECTED' };
       }
 
-      await this.refundWithdrawal(tx, withdrawal, 'REJECTED', note, now);
-      return { id: withdrawal.id, status: 'REJECTED' };
+      // Inside the transaction: a payout that moved without an audit row, or an
+      // audit row for a payout that rolled back, are both worse than a retry.
+      await this.audit.log(tx, {
+        adminId: admin.id,
+        adminRole: admin.adminRole,
+        action: AUDIT_ACTIONS.withdrawalResolve,
+        entity: 'withdrawal',
+        entityId: withdrawal.id,
+        reason: note,
+        detail: { decision: status, amount: withdrawal.amount, userId: withdrawal.userId },
+      });
+
+      return outcome;
     });
   }
 
@@ -531,7 +634,7 @@ export class WalletService {
         throw AppError.conflict(ErrorCode.alreadyResolved, 'Only pending withdrawals can be cancelled');
       }
 
-      await this.refundWithdrawal(tx, withdrawal, 'CANCELLED', 'Cancelled by user', this.clock.now());
+      await this.refundWithdrawal(tx, withdrawal, 'CANCELLED', 'Người dùng tự huỷ yêu cầu', this.clock.now());
       return { id: withdrawal.id, status: 'CANCELLED' };
     });
   }
@@ -542,17 +645,14 @@ export class WalletService {
     status: 'REJECTED' | 'CANCELLED',
     note: string | undefined,
     now: Date,
+    /** Absent when the user cancelled it themselves. */
+    processedBy?: string,
   ): Promise<void> {
-    const [wallet] = await tx.select().from(wallets).where(eq(wallets.id, withdrawal.walletId)).for('update');
-
-    await tx
-      .update(wallets)
-      .set({ availableBalance: wallet.availableBalance + withdrawal.amount, updatedAt: now })
-      .where(eq(wallets.id, wallet.id));
+    await this.addToAvailable(tx, withdrawal.walletId, withdrawal.amount);
 
     await tx
       .update(withdrawals)
-      .set({ status, note: note ?? withdrawal.note, processedAt: now })
+      .set({ status, note: note ?? withdrawal.note, processedAt: now, processedBy: processedBy ?? null })
       .where(eq(withdrawals.id, withdrawal.id));
 
     await this.post(tx, [
@@ -562,16 +662,16 @@ export class WalletService {
         direction: 'DEBIT',
         type: 'ADJUSTMENT',
         amount: withdrawal.amount,
-        note: `Withdrawal ${status.toLowerCase()}`,
+        note: status === 'REJECTED' ? LEDGER_NOTES.withdrawalRejected : LEDGER_NOTES.withdrawalCancelled,
       },
       {
         accountType: 'USER',
         accountId: withdrawal.userId,
-        walletId: wallet.id,
+        walletId: withdrawal.walletId,
         direction: 'CREDIT',
         type: 'ADJUSTMENT',
         amount: withdrawal.amount,
-        note: `Withdrawal ${status.toLowerCase()}`,
+        note: status === 'REJECTED' ? LEDGER_NOTES.withdrawalRejected : LEDGER_NOTES.withdrawalCancelled,
       },
     ]);
   }
@@ -583,18 +683,13 @@ export class WalletService {
   ): Promise<{ holdId: string; walletId: string }> {
     assertPositiveVnd(input.amount, 'escrow amount');
 
-    const wallet = await this.lockWallet(tx, input.hirerId);
-    if (wallet.availableBalance < input.amount) {
+    const wallet = await this.getOrCreateWallet(tx, input.hirerId);
+    if ((await this.tryDebitAvailable(tx, wallet.id, input.amount)) === null) {
       throw AppError.badRequest(
         ErrorCode.insufficientBalance,
         'Your available balance cannot cover this order any more; top up and try again',
       );
     }
-
-    await tx
-      .update(wallets)
-      .set({ availableBalance: wallet.availableBalance - input.amount, updatedAt: this.clock.now() })
-      .where(eq(wallets.id, wallet.id));
 
     const [hold] = await tx
       .insert(escrowHolds)
@@ -610,7 +705,7 @@ export class WalletService {
         direction: 'DEBIT',
         type: 'ESCROW_HOLD',
         amount: input.amount,
-        note: 'Funds held for order',
+        note: LEDGER_NOTES.escrowHold,
       },
       {
         accountType: 'ESCROW',
@@ -619,7 +714,7 @@ export class WalletService {
         direction: 'CREDIT',
         type: 'ESCROW_HOLD',
         amount: input.amount,
-        note: 'Funds held for order',
+        note: LEDGER_NOTES.escrowHold,
       },
     ]);
 
@@ -670,11 +765,8 @@ export class WalletService {
     let pendingCreditId: string | null = null;
 
     if (refund > 0) {
-      const hirerWallet = await this.lockWallet(tx, input.hirerId);
-      await tx
-        .update(wallets)
-        .set({ availableBalance: hirerWallet.availableBalance + refund, updatedAt: now })
-        .where(eq(wallets.id, hirerWallet.id));
+      const hirerWallet = await this.getOrCreateWallet(tx, input.hirerId);
+      await this.addToAvailable(tx, hirerWallet.id, refund);
 
       await this.post(tx, [
         {
@@ -684,7 +776,7 @@ export class WalletService {
           direction: 'DEBIT',
           type: 'ESCROW_REFUND',
           amount: refund,
-          note: 'Unused escrow refunded to hirer',
+          note: LEDGER_NOTES.escrowRefund,
         },
         {
           accountType: 'USER',
@@ -694,17 +786,13 @@ export class WalletService {
           direction: 'CREDIT',
           type: 'ESCROW_REFUND',
           amount: refund,
-          note: 'Unused escrow refunded to hirer',
+          note: LEDGER_NOTES.escrowRefund,
         },
       ]);
     }
 
     if (input.earned > 0 && input.playerId) {
-      const playerWallet = await this.lockWallet(tx, input.playerId);
-      await tx
-        .update(wallets)
-        .set({ pendingBalance: playerWallet.pendingBalance + payout, updatedAt: now })
-        .where(eq(wallets.id, playerWallet.id));
+      const playerWallet = await this.getOrCreateWallet(tx, input.playerId);
 
       const [credit] = await tx
         .insert(pendingCredits)
@@ -726,7 +814,7 @@ export class WalletService {
           direction: 'DEBIT',
           type: 'ESCROW_RELEASE',
           amount: input.earned,
-          note: 'Escrow released',
+          note: LEDGER_NOTES.escrowReleased,
         },
         {
           accountType: 'USER',
@@ -736,7 +824,7 @@ export class WalletService {
           direction: 'CREDIT',
           type: 'ORDER_EARNING',
           amount: payout,
-          note: 'Order earnings (pending release)',
+          note: LEDGER_NOTES.orderEarning,
         },
         ...(fee > 0
           ? [
@@ -747,7 +835,7 @@ export class WalletService {
                 direction: 'CREDIT' as const,
                 type: 'PLATFORM_FEE' as const,
                 amount: fee,
-                note: 'Platform commission',
+                note: LEDGER_NOTES.platformFee,
               },
             ]
           : []),
@@ -778,8 +866,13 @@ export class WalletService {
 
   /**
    * Claws back part of an order's earnings from a player to refund a hirer.
-   * Pending balance is used first, then available balance; any shortfall is
-   * absorbed by the platform so the hirer always receives the full refund.
+   * Un-released earnings are taken first, then the available balance; any
+   * shortfall is absorbed by the platform so the hirer always receives the full
+   * refund.
+   *
+   * The ceiling is the payout the player received for this order *minus every
+   * refund already paid out on it*. Checking per-request instead of cumulative
+   * would let a second upheld report refund the same money again.
    */
   async refundFromPlayerToHirer(
     tx: DbExecutor,
@@ -787,22 +880,63 @@ export class WalletService {
   ): Promise<{ fromPending: number; fromAvailable: number; fromPlatform: number }> {
     assertPositiveVnd(input.amount, 'refund amount');
 
-    const playerWallet = await this.lockWallet(tx, input.playerId);
-    const fromPending = Math.min(input.amount, playerWallet.pendingBalance);
-    const remainingAfterPending = input.amount - fromPending;
-    const fromAvailable = Math.min(remainingAfterPending, playerWallet.availableBalance);
-    const fromPlatform = input.amount - fromPending - fromAvailable;
-    const playerTotal = fromPending + fromAvailable;
-    const now = this.clock.now();
+    // Locking the hold is what makes the cumulative check trustworthy: two
+    // reports resolved at the same moment would otherwise both read the same
+    // already-refunded total and both pass.
+    const hold = await this.findHold(tx, input.orderId);
+    const [order] = await tx
+      .select({ playerPayout: orders.playerPayout })
+      .from(orders)
+      .where(eq(orders.id, hold.orderId))
+      .limit(1);
+    if (!order) throw AppError.notFound(ErrorCode.orderNotFound, 'Order not found');
 
-    await tx
-      .update(wallets)
-      .set({
-        pendingBalance: playerWallet.pendingBalance - fromPending,
-        availableBalance: playerWallet.availableBalance - fromAvailable,
-        updatedAt: now,
-      })
-      .where(eq(wallets.id, playerWallet.id));
+    const alreadyRefunded = await this.reportRefundedTotal(tx, hold.orderId);
+    const refundable = (order.playerPayout ?? 0) - alreadyRefunded;
+    if (input.amount > refundable) {
+      throw AppError.unprocessable(
+        ErrorCode.refundExceedsPayout,
+        `Only ${refundable} VND of this order is still refundable; ${alreadyRefunded} VND has already been refunded`,
+        { playerPayout: order.playerPayout ?? 0, alreadyRefunded, refundable },
+      );
+    }
+
+    const playerWallet = await this.lockWallet(tx, input.playerId);
+
+    // Pending money is a set of credit rows, not a number, so clawing back has
+    // to shrink those rows. Reducing a balance instead — which is what this did
+    // — left the credit standing; the release job later found nothing to move,
+    // clamped it to zero and still stamped `releasedAt`, so the earnings
+    // disappeared with no ledger row to show for it.
+    let remaining = input.amount;
+    const openCredits = await tx
+      .select({ id: pendingCredits.id, amount: pendingCredits.amount })
+      .from(pendingCredits)
+      .where(and(eq(pendingCredits.walletId, playerWallet.id), isNull(pendingCredits.releasedAt)))
+      .orderBy(asc(pendingCredits.availableAt));
+
+    for (const credit of openCredits) {
+      if (remaining <= 0) break;
+      const take = Math.min(remaining, credit.amount);
+      if (take === credit.amount) {
+        await tx.delete(pendingCredits).where(eq(pendingCredits.id, credit.id));
+      } else {
+        await tx
+          .update(pendingCredits)
+          .set({ amount: credit.amount - take })
+          .where(eq(pendingCredits.id, credit.id));
+      }
+      remaining -= take;
+    }
+    const fromPending = input.amount - remaining;
+
+    const fromAvailable = Math.min(remaining, playerWallet.availableBalance);
+    if (fromAvailable > 0) {
+      await this.debitLocked(tx, playerWallet.id, fromAvailable);
+      remaining -= fromAvailable;
+    }
+    const fromPlatform = remaining;
+    const playerTotal = fromPending + fromAvailable;
 
     if (playerTotal > 0) {
       await this.post(tx, [
@@ -814,7 +948,7 @@ export class WalletService {
           direction: 'DEBIT',
           type: 'ADJUSTMENT',
           amount: playerTotal,
-          note: 'Refund to hirer after upheld report',
+          note: LEDGER_NOTES.reportRefund,
         },
         {
           accountType: 'PLATFORM',
@@ -823,16 +957,13 @@ export class WalletService {
           direction: 'CREDIT',
           type: 'ADJUSTMENT',
           amount: playerTotal,
-          note: 'Claw-back from player',
+          note: LEDGER_NOTES.reportClawback,
         },
       ]);
     }
 
-    const hirerWallet = await this.lockWallet(tx, input.hirerId);
-    await tx
-      .update(wallets)
-      .set({ availableBalance: hirerWallet.availableBalance + input.amount, updatedAt: now })
-      .where(eq(wallets.id, hirerWallet.id));
+    const hirerWallet = await this.getOrCreateWallet(tx, input.hirerId);
+    await this.addToAvailable(tx, hirerWallet.id, input.amount);
 
     await this.post(tx, [
       {
@@ -842,7 +973,7 @@ export class WalletService {
         direction: 'DEBIT',
         type: 'REPORT_REFUND',
         amount: input.amount,
-        note: 'Report compensation to hirer',
+        note: LEDGER_NOTES.reportCompensation,
       },
       {
         accountType: 'USER',
@@ -852,14 +983,38 @@ export class WalletService {
         direction: 'CREDIT',
         type: 'REPORT_REFUND',
         amount: input.amount,
-        note: 'Report compensation to hirer',
+        note: LEDGER_NOTES.reportCompensation,
       },
     ]);
 
     return { fromPending, fromAvailable, fromPlatform };
   }
 
-  /** Releases pending earnings whose hold period has elapsed. */
+  /** Sum of every report refund already credited to a hirer for one order. */
+  private async reportRefundedTotal(tx: DbExecutor, orderId: string): Promise<number> {
+    const [row] = await tx
+      .select({
+        total: sql<number>`coalesce(sum(${ledgerEntries.amount}), 0)::bigint`,
+      })
+      .from(ledgerEntries)
+      .where(
+        and(
+          eq(ledgerEntries.orderId, orderId),
+          eq(ledgerEntries.type, 'REPORT_REFUND'),
+          eq(ledgerEntries.direction, 'CREDIT'),
+        ),
+      );
+    return Number(row?.total ?? 0);
+  }
+
+  /**
+   * Moves earnings whose hold period has elapsed into the available balance.
+   *
+   * Wallets are locked before their credits, which is the order the report
+   * claw-back uses too; going credit-then-wallet here would have had the two
+   * paths deadlocking around the same rows. It also writes each wallet once
+   * instead of once per credit.
+   */
   async releaseDuePendingCredits(walletId?: string): Promise<number> {
     const now = this.clock.now();
     const dueFilters = [
@@ -867,47 +1022,41 @@ export class WalletService {
       lte(pendingCredits.availableAt, now),
       ...(walletId ? [eq(pendingCredits.walletId, walletId)] : []),
     ];
-    const due = await this.db
-      .select()
+
+    const dueWallets = await this.db
+      .selectDistinct({ walletId: pendingCredits.walletId })
       .from(pendingCredits)
-      .where(and(...dueFilters))
-      .limit(200);
+      .where(and(...dueFilters));
 
     let released = 0;
 
-    for (const credit of due) {
-      const didRelease = await this.db.transaction(async (tx) => {
-        const [locked] = await tx
-          .select()
+    for (const { walletId: id } of dueWallets) {
+      released += await this.db.transaction(async (tx) => {
+        const [wallet] = await tx.select().from(wallets).where(eq(wallets.id, id)).for('update');
+        if (!wallet) return 0;
+
+        const due = await tx
+          .select({ id: pendingCredits.id, amount: pendingCredits.amount })
           .from(pendingCredits)
-          .where(eq(pendingCredits.id, credit.id))
+          .where(
+            and(
+              eq(pendingCredits.walletId, id),
+              isNull(pendingCredits.releasedAt),
+              lte(pendingCredits.availableAt, now),
+            ),
+          )
           .for('update');
 
-        if (!locked || locked.releasedAt) return false;
+        if (due.length === 0) return 0;
 
-        const [wallet] = await tx.select().from(wallets).where(eq(wallets.id, locked.walletId)).for('update');
-        const amount = Math.min(locked.amount, wallet.pendingBalance);
-
-        if (amount > 0) {
-          await tx
-            .update(wallets)
-            .set({
-              pendingBalance: wallet.pendingBalance - amount,
-              availableBalance: wallet.availableBalance + amount,
-              updatedAt: this.clock.now(),
-            })
-            .where(eq(wallets.id, wallet.id));
-        }
-
+        await this.addToAvailable(tx, id, due.reduce((sum, credit) => sum + credit.amount, 0));
         await tx
           .update(pendingCredits)
-          .set({ releasedAt: this.clock.now() })
-          .where(eq(pendingCredits.id, locked.id));
+          .set({ releasedAt: now })
+          .where(inArray(pendingCredits.id, due.map((credit) => credit.id)));
 
-        return amount > 0;
+        return due.length;
       });
-
-      if (didRelease) released += 1;
     }
 
     return released;

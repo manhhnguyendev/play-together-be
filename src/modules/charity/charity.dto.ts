@@ -65,11 +65,14 @@ export class ResolveCharityWithdrawalDto {
   @IsIn(WITHDRAWAL_DECISIONS)
   decision: (typeof WITHDRAWAL_DECISIONS)[number];
 
-  @ApiPropertyOptional({ maxLength: 255 })
-  @IsOptional()
+  @ApiProperty({
+    maxLength: 255,
+    description: 'Required: a charity payout decision moves real money and is audited with this note',
+  })
   @IsString()
+  @MinLength(3)
   @MaxLength(255)
-  note?: string;
+  note: string;
 }
 
 export class CreateCharityAccountDto {

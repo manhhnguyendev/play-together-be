@@ -1,19 +1,36 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { and, asc, count, desc, eq, inArray, lte, or, type SQL } from 'drizzle-orm';
+import { ConfigService } from '@nestjs/config';
+import { and, asc, count, desc, eq, gt, inArray, lt, lte, ne, or, sql, type SQL } from 'drizzle-orm';
 import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
 import { isUniqueViolation } from '../../common/errors/pg-errors';
-import { quoteEarlyEnd } from '../../common/money/money';
+import { quoteEarlyEnd, formatVnd } from '../../common/money/money';
 import { offsetOf, paginated, type Paginated } from '../../common/pagination/pagination';
-import { addHours, addMinutes, Clock, MS_HOUR } from '../../common/time/time';
 import {
+  addHours,
+  addMinutes,
+  Clock,
+  formatDateTimeInZone,
+  isSlotCovered,
+  MS_DAY,
+  MS_HOUR,
+  MS_MINUTE,
+} from '../../common/time/time';
+import {
+  availabilityWindows,
   escrowHolds,
+  DISPUTED_ORDER_STATUSES,
+  FEEDBACK_ORDER_STATUSES,
   games,
   orderGames,
   orders,
   orderStatusHistory,
+  PROPOSED_ORDER_STATUSES,
   ratings,
+  reports,
+  SCHEDULED_ORDER_STATUSES,
+  SESSION_ORDER_STATUSES,
   userSkills,
   users,
   type Order,
@@ -27,40 +44,36 @@ import { SystemConfigService } from '../system-config/system-config.service';
 import { StatsService } from '../users/stats.service';
 import { toUserSummary } from '../users/user.mapper';
 import { UsersService } from '../users/users.service';
-import type { UserSummary } from '../users/users.dto';
 import { WalletService } from '../wallet/wallet.service';
-import type { CreateOrderDto, EndEarlyDto, ListOrdersQuery, RejectOrderDto } from './orders.dto';
+import type {
+  CancelOrderDto,
+  CreateOrderDto,
+  EndEarlyDto,
+  ListOrdersQuery,
+  OrderView,
+  RejectOrderDto,
+} from './orders.dto';
 
-const FINISHED_STATUSES = ['COMPLETED', 'ENDED_EARLY_BY_HIRER', 'ENDED_EARLY_BY_PLAYER'] as const;
-const ACTIVE_STATUSES = ['PROCESSING', 'ACCEPTED'] as const;
+export type { OrderView };
 
-export type OrderView = {
-  id: string;
-  status: OrderStatus;
-  hours: number;
-  hourlyRate: number;
-  totalPrice: number;
-  feeBps: number;
-  playerPayout: number | null;
-  message: string;
-  reason: string | null;
-  respondBy: string;
-  startsAt: string | null;
-  scheduledEndAt: string | null;
-  endedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  hirer: UserSummary;
-  player: UserSummary;
-  games: Array<{ id: string; name: string; displayName: string | null }>;
-  canRate: boolean;
-  hasRated: boolean;
-  escrowStatus: 'NONE' | 'HELD' | 'SETTLED' | 'REFUNDED' | 'PARTIALLY_SETTLED';
-};
+/** The session is over: the parties can rate and report each other. */
+const FEEDBACK_STATUSES = FEEDBACK_ORDER_STATUSES;
+/** A party is committed to a session that has not been played out yet. */
+const SESSION_STATUSES = SESSION_ORDER_STATUSES;
+/** Anything that has not reached an outcome yet. */
+const OPEN_STATUSES = ['PROPOSED', ...SESSION_ORDER_STATUSES, ...DISPUTED_ORDER_STATUSES] as const;
+/** LIVE plus the reconciliation window that follows it. */
+const SETTLEABLE_STATUSES = ['LIVE', 'DISPUTED'] as const;
+/** Only a session that is still running can be stopped before its scheduled end. */
+const LIVE_ONLY = ['LIVE'] as const;
+
+/** Sessions cannot be booked further out than this — keeps calendars honest. */
+const BOOKING_HORIZON_DAYS = 14;
 
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
+  private readonly timeZone: string;
 
   constructor(
     @Inject(DB) private readonly db: AppDatabase,
@@ -71,7 +84,10 @@ export class OrdersService {
     private readonly wallet: WalletService,
     private readonly configs: SystemConfigService,
     private readonly clock: Clock,
-  ) {}
+    config: ConfigService,
+  ) {
+    this.timeZone = config.get<string>('APP_TIMEZONE') ?? 'Asia/Ho_Chi_Minh';
+  }
 
   async create(hirerId: string, dto: CreateOrderDto): Promise<OrderView> {
     if (hirerId === dto.playerId) {
@@ -80,6 +96,9 @@ export class OrdersService {
     if (await this.configs.isMaintenance()) {
       throw AppError.unavailable(ErrorCode.maintenanceMode, 'The system is under maintenance');
     }
+
+    const requestedStart = this.parseRequestedStart(dto.startsAt);
+    const hireNow = requestedStart === null;
 
     const hirer = await this.usersService.requireActive(hirerId);
     if (hirer.role !== 'USER') {
@@ -91,10 +110,12 @@ export class OrdersService {
         'Turn off player mode before hiring another player',
       );
     }
-    if (hirer.status !== 'ONLINE') {
+    if (hireNow ? hirer.status !== 'ONLINE' : hirer.status === 'MAINTAIN') {
       throw AppError.badRequest(
         ErrorCode.playerUnavailable,
-        `Your presence is ${hirer.status}; set it to ONLINE before creating an order`,
+        hireNow
+          ? `Your presence is ${hirer.status}; set it to ONLINE before creating an order`
+          : `Your account is ${hirer.status}; it cannot book sessions`,
       );
     }
 
@@ -102,8 +123,15 @@ export class OrdersService {
     if (!player) throw AppError.notFound(ErrorCode.userNotFound, 'Player not found');
     if (!player.isActive) throw AppError.badRequest(ErrorCode.userNotActive, 'This player account is locked');
     if (!player.isPlayer) throw AppError.badRequest(ErrorCode.playerUnavailable, 'This user is not accepting hires');
-    if (player.status !== 'ONLINE' && player.status !== 'OFFLINE') {
-      throw AppError.badRequest(ErrorCode.playerUnavailable, `This player is currently ${player.status}`);
+    // Booking ahead and hiring now need different presence. Being busy in a
+    // session today must not stop someone from taking next Tuesday — that is
+    // the whole point of a calendar — but an instant hire still needs a player
+    // who is not already mid-session.
+    if (hireNow ? player.status !== 'ONLINE' && player.status !== 'OFFLINE' : player.status === 'MAINTAIN') {
+      throw AppError.badRequest(
+        ErrorCode.playerUnavailable,
+        hireNow ? `This player is currently ${player.status}` : `This player is ${player.status}`,
+      );
     }
 
     if (await this.usersService.isBlockedEitherWay(hirerId, player.id)) {
@@ -134,8 +162,6 @@ export class OrdersService {
       );
     }
 
-    await this.assertNoActiveOrder(hirerId, player.id);
-
     const feeBps = await this.configs.getNumber(CONFIG_KEYS.platformFeeBps);
     const responseMinutes = await this.configs.getNumber(CONFIG_KEYS.orderResponseMinutes);
     const now = this.clock.now();
@@ -144,18 +170,44 @@ export class OrdersService {
     let created: Order;
     try {
       created = await this.db.transaction(async (tx) => {
+        // The slot is only reserved once the player accepts, so two hirers can
+        // both put a request on the same free slot. Calendar locks keep the
+        // availability + overlap check below and the accept that lands on the
+        // same slot from deciding against each other's stale reads.
+        await this.lockCalendars(tx, [hirerId, player.id]);
+
+        const slot = requestedStart
+          ? await this.resolveBookedSlot(tx, {
+              playerId: player.id,
+              hours: dto.hours,
+              requestedStart,
+              now,
+            })
+          : { startsAt: null, scheduledEndAt: null };
+
+        if (slot.startsAt && slot.scheduledEndAt) {
+          await this.assertSlotFree(tx, {
+            hirerId,
+            playerId: player.id,
+            startsAt: slot.startsAt,
+            scheduledEndAt: slot.scheduledEndAt,
+          });
+        }
+
         const [order] = await tx
           .insert(orders)
           .values({
             hirerId,
             playerId: player.id,
-            status: 'PROCESSING',
+            status: 'PROPOSED',
             hours: dto.hours,
             hourlyRate: player.pricePerHour,
             totalPrice,
             feeBps,
             message: dto.message,
             respondBy: addMinutes(now, responseMinutes),
+            startsAt: slot.startsAt,
+            scheduledEndAt: slot.scheduledEndAt,
           })
           .returning();
 
@@ -163,15 +215,17 @@ export class OrdersService {
         await tx.insert(orderStatusHistory).values({
           orderId: order.id,
           fromStatus: null,
-          toStatus: 'PROCESSING',
+          toStatus: 'PROPOSED',
           actorId: hirerId,
-          reason: 'Order created',
+          reason: 'Tạo yêu cầu thuê',
         });
 
         await this.notifications.send(tx, {
           userId: player.id,
-          title: 'New hire request',
-          body: `${hirer.name} wants to hire you for ${dto.hours} hour(s).`,
+          title: 'Yêu cầu thuê mới',
+          body: slot.startsAt
+            ? `${hirer.name} muốn hẹn bạn ${dto.hours} giờ vào lúc ${formatDateTimeInZone(slot.startsAt, this.timeZone)}.`
+            : `${hirer.name} muốn thuê bạn ${dto.hours} giờ.`,
           referenceUrl: `/orders/${order.id}`,
         });
 
@@ -180,8 +234,8 @@ export class OrdersService {
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw AppError.conflict(
-          ErrorCode.activeOrderExists,
-          'You or the player already have an active order; wait for it to finish',
+          ErrorCode.slotConflict,
+          'That slot has just been taken. Pick another time or hire now instead.',
         );
       }
       throw error;
@@ -211,7 +265,7 @@ export class OrdersService {
         .select()
         .from(orders)
         .where(where)
-        .orderBy(desc(orders.createdAt))
+        .orderBy(desc(orders.createdAt), desc(orders.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(orders).where(where),
@@ -257,8 +311,8 @@ export class OrdersService {
     if (existing.playerId !== playerId) {
       throw AppError.forbidden(ErrorCode.orderNotParticipant, 'You are not the player of this order');
     }
-    if (existing.status !== 'PROCESSING') {
-      throw AppError.conflict(ErrorCode.invalidOrderState, `Order is ${existing.status}, not PROCESSING`);
+    if (existing.status !== 'PROPOSED') {
+      throw AppError.conflict(ErrorCode.invalidOrderState, `Order is ${existing.status}, not PROPOSED`);
     }
     if (existing.respondBy.getTime() <= now.getTime()) {
       await this.expireOrder(existing.id, now);
@@ -270,11 +324,44 @@ export class OrdersService {
         orderId,
         actorId: playerId,
         role: 'player',
-        expected: 'PROCESSING',
+        expected: PROPOSED_ORDER_STATUSES,
       });
       if (order.respondBy.getTime() <= now.getTime()) {
         throw AppError.conflict(ErrorCode.invalidOrderState, 'This hire request has expired');
       }
+
+      let status: OrderStatus = 'LIVE';
+      let startsAt = now;
+      let scheduledEndAt = addHours(now, order.hours);
+
+      // Both paths take the same two calendar locks. An instant hire is a
+      // session as well, and if its own span were never checked a player could
+      // be hired live at 19:59 and find at 20:00 that they are also booked for a
+      // session that can no longer start.
+      await this.lockCalendars(tx, [order.hirerId, order.playerId]);
+
+      if (order.startsAt && order.scheduledEndAt) {
+        // A booked request is re-checked against the calendar as it is now, not
+        // as it was when the request was sent: another hirer may have taken the
+        // slot, or the player may have withdrawn those hours.
+        const slot = await this.resolveBookedSlot(tx, {
+          playerId: order.playerId,
+          hours: order.hours,
+          requestedStart: order.startsAt,
+          now,
+        });
+        status = 'SCHEDULED';
+        startsAt = slot.startsAt;
+        scheduledEndAt = slot.scheduledEndAt;
+      }
+
+      await this.assertSlotFree(tx, {
+        hirerId: order.hirerId,
+        playerId: order.playerId,
+        startsAt,
+        scheduledEndAt,
+        orderId: order.id,
+      });
 
       await this.wallet.holdEscrow(tx, {
         orderId: order.id,
@@ -282,32 +369,37 @@ export class OrdersService {
         amount: order.totalPrice,
       });
 
-      const startsAt = now;
-      const scheduledEndAt = addHours(startsAt, order.hours);
-
       const [accepted] = await tx
         .update(orders)
-        .set({ status: 'ACCEPTED', startsAt, scheduledEndAt, updatedAt: now })
+        .set({ status, startsAt, scheduledEndAt, updatedAt: now })
         .where(eq(orders.id, order.id))
         .returning();
 
-      await tx
-        .update(users)
-        .set({ status: 'BUSY', updatedAt: now })
-        .where(eq(users.id, order.playerId));
+      if (status === 'LIVE') {
+        await tx
+          .update(users)
+          .set({ status: 'BUSY', updatedAt: now })
+          .where(eq(users.id, order.playerId));
+      }
 
       await tx.insert(orderStatusHistory).values({
         orderId: order.id,
-        fromStatus: 'PROCESSING',
-        toStatus: 'ACCEPTED',
+        fromStatus: 'PROPOSED',
+        toStatus: status,
         actorId: playerId,
-        reason: `Session scheduled for ${order.hours} hour(s)`,
+        reason:
+          status === 'SCHEDULED'
+            ? `Đã hẹn lúc ${formatDateTimeInZone(startsAt, this.timeZone)} (${order.hours} giờ)`
+            : `Bắt đầu ngay (${order.hours} giờ)`,
       });
 
       await this.notifications.send(tx, {
         userId: order.hirerId,
-        title: 'Hire request accepted',
-        body: `Your session starts now and runs for ${order.hours} hour(s).`,
+        title: status === 'SCHEDULED' ? 'Đã giữ lịch hẹn' : 'Đã chấp nhận yêu cầu thuê',
+        body:
+          status === 'SCHEDULED'
+            ? `Lượt thuê của bạn bắt đầu lúc ${formatDateTimeInZone(startsAt, this.timeZone)}, kéo dài ${order.hours} giờ.`
+            : `Lượt thuê bắt đầu ngay bây giờ, kéo dài ${order.hours} giờ.`,
         referenceUrl: `/orders/${order.id}`,
       });
 
@@ -320,35 +412,58 @@ export class OrdersService {
 
   async reject(playerId: string, orderId: string, dto: RejectOrderDto): Promise<OrderView> {
     const now = this.clock.now();
+    const existing = await this.findOrder(orderId);
+
+    if (existing.playerId !== playerId) {
+      throw AppError.forbidden(ErrorCode.orderNotParticipant, 'You are not the player of this order');
+    }
+    if (existing.status !== 'PROPOSED') {
+      throw AppError.conflict(ErrorCode.invalidOrderState, `Order is ${existing.status}, not PROPOSED`);
+    }
+    // The app counts this window down and calls reject the moment it hits zero.
+    // Recording that as a deliberate decline would apply the rejection penalty
+    // to an expiry, so the deadline decides the outcome and the caller simply
+    // sees the order close.
+    if (existing.respondBy.getTime() <= now.getTime()) {
+      await this.expireOrder(existing.id, now);
+      const [view] = await this.hydrate([await this.findOrder(orderId)], playerId);
+      return view;
+    }
 
     const updated = await this.db.transaction(async (tx) => {
       const order = await this.lockOrder(tx, {
         orderId,
         actorId: playerId,
         role: 'player',
-        expected: 'PROCESSING',
+        expected: PROPOSED_ORDER_STATUSES,
       });
 
       const [rejected] = await tx
         .update(orders)
-        .set({ status: 'REJECTED', reason: dto.reason ?? null, endedAt: now, updatedAt: now })
+        .set({
+          status: 'CLOSED',
+          closeReason: 'REJECTED_BY_PLAYER',
+          reason: dto.reason ?? null,
+          endedAt: now,
+          updatedAt: now,
+        })
         .where(eq(orders.id, order.id))
         .returning();
 
       await tx.insert(orderStatusHistory).values({
         orderId: order.id,
-        fromStatus: 'PROCESSING',
-        toStatus: 'REJECTED',
+        fromStatus: 'PROPOSED',
+        toStatus: 'CLOSED',
         actorId: playerId,
         reason: dto.reason ?? null,
       });
 
-      await this.behavior.adjust(tx, playerId, 'ORDER_REJECTED', { satisfaction: -1 }, order.id, 'Hire request rejected');
+      await this.behavior.adjust(tx, playerId, 'ORDER_REJECTED', { satisfaction: -1 }, order.id, 'Từ chối yêu cầu thuê');
 
       await this.notifications.send(tx, {
         userId: order.hirerId,
-        title: 'Hire request rejected',
-        body: dto.reason ? `The player declined: ${dto.reason}` : 'The player declined your request.',
+        title: 'Yêu cầu thuê bị từ chối',
+        body: dto.reason ? `Người chơi đã từ chối: ${dto.reason}` : 'Người chơi đã từ chối yêu cầu của bạn.',
         referenceUrl: `/orders/${order.id}`,
       });
 
@@ -359,36 +474,64 @@ export class OrdersService {
     return view;
   }
 
-  async cancel(hirerId: string, orderId: string): Promise<OrderView> {
+  async cancel(hirerId: string, orderId: string, dto: CancelOrderDto): Promise<OrderView> {
     const now = this.clock.now();
+    const reason = dto.reason?.trim() ? dto.reason.trim().slice(0, 500) : null;
 
     const updated = await this.db.transaction(async (tx) => {
       const order = await this.lockOrder(tx, {
         orderId,
         actorId: hirerId,
         role: 'hirer',
-        expected: 'PROCESSING',
-        statusMessage: 'Only a pending request can be cancelled; use early-end for an accepted session',
+        expected: [...PROPOSED_ORDER_STATUSES, ...SCHEDULED_ORDER_STATUSES],
+        statusMessage:
+          'Only a request or a session that has not started can be cancelled; use early-end once it is running',
       });
+      if (order.status === 'SCHEDULED' && order.startsAt && order.startsAt.getTime() <= now.getTime()) {
+        // The session has begun without the scheduler having flipped it yet.
+        // Cancelling from here would refund a session that is already being
+        // played, so it has to go through early-end like any running one.
+        throw AppError.conflict(
+          ErrorCode.invalidOrderState,
+          'This session has already started; end it early instead',
+        );
+      }
+
+      const booked = order.status === 'SCHEDULED';
+      if (booked) {
+        // Accepting a booking already moved the hirer's money into escrow, so
+        // cancelling before the start has to move it back in full. Nothing is
+        // charged to the player either way: the hirer chose to withdraw.
+        await this.lockCalendars(tx, [order.hirerId, order.playerId]);
+        await this.wallet.refundEscrow(tx, { orderId: order.id, hirerId: order.hirerId });
+      }
 
       const [cancelled] = await tx
         .update(orders)
-        .set({ status: 'CANCELLED', endedAt: now, updatedAt: now })
+        .set({
+          status: 'CLOSED',
+          closeReason: 'CANCELLED_BY_HIRER',
+          reason,
+          endedAt: now,
+          updatedAt: now,
+        })
         .where(eq(orders.id, order.id))
         .returning();
 
       await tx.insert(orderStatusHistory).values({
         orderId: order.id,
-        fromStatus: 'PROCESSING',
-        toStatus: 'CANCELLED',
+        fromStatus: order.status,
+        toStatus: 'CLOSED',
         actorId: hirerId,
-        reason: 'Cancelled by hirer',
+        reason: booked ? 'Người thuê hủy lịch hẹn trước giờ bắt đầu' : 'Người thuê đã hủy',
       });
 
       await this.notifications.send(tx, {
         userId: order.playerId,
-        title: 'Hire request cancelled',
-        body: 'The hirer cancelled their request.',
+        title: booked ? 'Lịch hẹn đã bị hủy' : 'Yêu cầu thuê đã bị hủy',
+        body: booked
+          ? 'Người thuê đã hủy lịch hẹn và được hoàn lại toàn bộ số tiền đang giữ.'
+          : 'Người thuê đã hủy yêu cầu.',
         referenceUrl: `/orders/${order.id}`,
       });
 
@@ -407,7 +550,7 @@ export class OrdersService {
         orderId,
         actorId,
         role: 'participant',
-        expected: 'ACCEPTED',
+        expected: SETTLEABLE_STATUSES,
       });
       if (order.scheduledEndAt && order.scheduledEndAt.getTime() > now.getTime()) {
         throw AppError.badRequest(
@@ -431,10 +574,10 @@ export class OrdersService {
         orderId,
         actorId,
         role: 'participant',
-        expected: 'ACCEPTED',
+        expected: LIVE_ONLY,
       });
       if (!order.startsAt) {
-        throw AppError.conflict(ErrorCode.invalidOrderState, `Order is ${order.status}, not ACCEPTED`);
+        throw AppError.conflict(ErrorCode.invalidOrderState, `Order is ${order.status}, not LIVE`);
       }
 
       const elapsedMs = Math.max(0, now.getTime() - order.startsAt.getTime());
@@ -458,13 +601,13 @@ export class OrdersService {
         releaseHours,
       });
 
-      const endedByHirer = order.hirerId === actorId;
-      const status: OrderStatus = endedByHirer ? 'ENDED_EARLY_BY_HIRER' : 'ENDED_EARLY_BY_PLAYER';
+      const endedEarlyBy = order.hirerId === actorId ? 'HIRER' : 'PLAYER';
 
       const [ended] = await tx
         .update(orders)
         .set({
-          status,
+          status: 'ENDED_EARLY',
+          endedEarlyBy,
           endedAt: now,
           reason: dto.reason ?? null,
           playerPayout: settlement.payout,
@@ -475,10 +618,10 @@ export class OrdersService {
 
       await tx.insert(orderStatusHistory).values({
         orderId: order.id,
-        fromStatus: 'ACCEPTED',
-        toStatus: status,
+        fromStatus: 'LIVE',
+        toStatus: 'ENDED_EARLY',
         actorId,
-        reason: dto.reason ?? `Ended early after ${quote.tenths}/10 of the session`,
+        reason: dto.reason ?? `Kết thúc sớm sau ${quote.tenths}/10 thời lượng`,
       });
 
       await tx
@@ -489,14 +632,14 @@ export class OrdersService {
       await this.notifications.sendMany(tx, [
         {
           userId: order.hirerId,
-          title: 'Session ended early',
-          body: `The session ended early. ${quote.refund.toLocaleString('en-US')} VND was refunded to your wallet.`,
+          title: 'Lượt thuê kết thúc sớm',
+          body: `Lượt thuê kết thúc sớm. Bạn đã được hoàn ${formatVnd(quote.refund)} vào ví.`,
           referenceUrl: `/orders/${order.id}`,
         },
         {
           userId: order.playerId,
-          title: 'Session ended early',
-          body: `The session ended early. Your earnings are pending release.`,
+          title: 'Lượt thuê kết thúc sớm',
+          body: 'Lượt thuê kết thúc sớm. Thu nhập của bạn đang chờ được giải ngân.',
           referenceUrl: `/orders/${order.id}`,
         },
       ]);
@@ -526,13 +669,15 @@ export class OrdersService {
       .where(
         and(
           or(eq(orders.hirerId, userId), eq(orders.playerId, userId)),
-          inArray(orders.status, [...ACTIVE_STATUSES]),
+          inArray(orders.status, [...OPEN_STATUSES]),
         ),
       )
       .for('update');
 
     for (const order of active) {
-      if (order.status === 'ACCEPTED') {
+      // Anything past the proposal stage already has the hirer's money in
+      // escrow; a proposal does not.
+      if (order.status !== 'PROPOSED') {
         await this.wallet.refundEscrow(tx, { orderId: order.id, hirerId: order.hirerId });
         await tx
           .update(users)
@@ -542,13 +687,19 @@ export class OrdersService {
 
       await tx
         .update(orders)
-        .set({ status: 'INTERRUPTED', endedAt: now, reason: reason.slice(0, 500), updatedAt: now })
+        .set({
+          status: 'CLOSED',
+          closeReason: 'INTERRUPTED_BY_ADMIN',
+          endedAt: now,
+          reason: reason.slice(0, 500),
+          updatedAt: now,
+        })
         .where(eq(orders.id, order.id));
 
       await tx.insert(orderStatusHistory).values({
         orderId: order.id,
         fromStatus: order.status,
-        toStatus: 'INTERRUPTED',
+        toStatus: 'CLOSED',
         actorId,
         reason,
       });
@@ -556,8 +707,8 @@ export class OrdersService {
       const counterpartId = order.hirerId === userId ? order.playerId : order.hirerId;
       await this.notifications.send(tx, {
         userId: counterpartId,
-        title: 'Order interrupted',
-        body: `This order was interrupted: ${reason}. Any escrowed funds were refunded to the hirer.`,
+        title: 'Đơn bị tạm dừng',
+        body: `Đơn của bạn bị tạm dừng: ${reason}. Số tiền đang giữ đã được hoàn lại cho người thuê.`,
         referenceUrl: `/orders/${order.id}`,
       });
     }
@@ -570,7 +721,7 @@ export class OrdersService {
     const due = await this.db
       .select({ id: orders.id })
       .from(orders)
-      .where(and(eq(orders.status, 'PROCESSING'), lte(orders.respondBy, now)))
+      .where(and(eq(orders.status, 'PROPOSED'), lte(orders.respondBy, now)))
       .limit(200);
 
     let expired = 0;
@@ -585,28 +736,175 @@ export class OrdersService {
     return expired;
   }
 
-  async autoCompleteDue(): Promise<number> {
+  /**
+   * A booked session starts on its own, at the hour the slot promises. Nothing
+   * about the money changes here — escrow was already held when the player
+   * accepted — so this only moves the order onto the running track and claims
+   * the player for the length of the session.
+   */
+  async startDueSessions(): Promise<number> {
     const now = this.clock.now();
     const due = await this.db
       .select({ id: orders.id })
       .from(orders)
-      .where(and(eq(orders.status, 'ACCEPTED'), lte(orders.scheduledEndAt, now)))
+      .where(and(eq(orders.status, 'SCHEDULED'), lte(orders.startsAt, now)))
       .limit(100);
 
-    let completed = 0;
+    let started = 0;
     for (const row of due) {
       try {
         await this.db.transaction(async (tx) => {
           const [order] = await tx.select().from(orders).where(eq(orders.id, row.id)).for('update');
-          if (!order || order.status !== 'ACCEPTED') return;
-          await this.settleCompletion(tx, order, now, null);
+          if (!order || order.status !== 'SCHEDULED') return;
+
+          await tx.update(orders).set({ status: 'LIVE', updatedAt: now }).where(eq(orders.id, order.id));
+
+          await tx.insert(orderStatusHistory).values({
+            orderId: order.id,
+            fromStatus: 'SCHEDULED',
+            toStatus: 'LIVE',
+            actorId: null,
+            reason: 'Lịch hẹn tự động bắt đầu đúng giờ đã đặt',
+          });
+
+          await tx
+            .update(users)
+            .set({ status: 'BUSY', updatedAt: now })
+            .where(eq(users.id, order.playerId));
+
+          await this.notifications.sendMany(tx, [
+            {
+              userId: order.hirerId,
+              title: 'Lượt thuê đã bắt đầu',
+              body: `Buổi hẹn đã bắt đầu, kéo dài ${order.hours} giờ.`,
+              referenceUrl: `/orders/${order.id}`,
+            },
+            {
+              userId: order.playerId,
+              title: 'Lượt thuê đã bắt đầu',
+              body: 'Buổi hẹn của bạn đã bắt đầu.',
+              referenceUrl: `/orders/${order.id}`,
+            },
+          ]);
         });
-        completed += 1;
+        started += 1;
       } catch (error) {
-        this.logger.warn(`Failed to auto-complete order ${row.id}: ${(error as Error).message}`);
+        this.logger.warn(`Failed to start booked order ${row.id}: ${(error as Error).message}`);
       }
     }
-    return completed;
+    return started;
+  }
+
+  /**
+   * The session clock ran out, so the session is over — but the money does not
+   * move yet. The order waits in DISPUTED for the objection window, during which
+   * either party can file a report and hold the payout for a moderator, or tap
+   * complete to release it now. This replaces the old behaviour of paying the
+   * player in full the second `scheduled_end_at` passed, with no confirmation
+   * from the hirer who paid for the session.
+   */
+  async openDisputeWindow(): Promise<number> {
+    const now = this.clock.now();
+    const due = await this.db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(and(eq(orders.status, 'LIVE'), lte(orders.scheduledEndAt, now)))
+      .limit(100);
+
+    let opened = 0;
+    for (const row of due) {
+      try {
+        await this.db.transaction(async (tx) => {
+          const [order] = await tx.select().from(orders).where(eq(orders.id, row.id)).for('update');
+          if (!order || order.status !== 'LIVE') return;
+
+          const endedAt = order.scheduledEndAt ?? now;
+          await tx
+            .update(orders)
+            .set({ status: 'DISPUTED', endedAt, disputedAt: now, updatedAt: now })
+            .where(eq(orders.id, order.id));
+
+          await tx.insert(orderStatusHistory).values({
+            orderId: order.id,
+            fromStatus: 'LIVE',
+            toStatus: 'DISPUTED',
+            actorId: null,
+            reason: 'Cuộc hẹn kết thúc theo lịch; tiền đang chờ đối soát',
+          });
+
+          await tx
+            .update(users)
+            .set({ status: 'ONLINE', updatedAt: now })
+            .where(eq(users.id, order.playerId));
+
+          const windowHours = await this.configs.getNumber(CONFIG_KEYS.disputeWindowHours);
+          await this.notifications.sendMany(tx, [
+            {
+              userId: order.hirerId,
+              title: 'Xác nhận lượt thuê',
+              body:
+                windowHours > 0
+                  ? `Lượt thuê đã kết thúc. Tiền của bạn sẽ tự động chuyển cho người chơi sau ${windowHours} giờ — bấm Hoàn thành để chuyển ngay, hoặc Báo cáo nếu có vấn đề.`
+                  : 'Lượt thuê đã kết thúc và tiền đang được chuyển cho người chơi. Hãy Báo cáo nếu có vấn đề.',
+              referenceUrl: `/orders/${order.id}`,
+            },
+            {
+              userId: order.playerId,
+              title: 'Lượt thuê đã kết thúc',
+              body:
+                windowHours > 0
+                  ? `Bạn nhận được tiền khi người thuê xác nhận hoặc sau ${windowHours} giờ.`
+                  : 'Thu nhập của bạn đang được giải ngân.',
+              referenceUrl: `/orders/${order.id}`,
+            },
+          ]);
+        });
+        opened += 1;
+      } catch (error) {
+        this.logger.warn(`Failed to open the dispute window for order ${row.id}: ${(error as Error).message}`);
+      }
+    }
+    return opened;
+  }
+
+  /**
+   * Releases payouts whose objection window has closed. An unresolved report is
+   * the objection itself, so an order with one stays in DISPUTED until a
+   * moderator decides — the money never leaves escrow while a case is open.
+   */
+  async settleDueDisputes(): Promise<number> {
+    const now = this.clock.now();
+    const windowHours = await this.configs.getNumber(CONFIG_KEYS.disputeWindowHours);
+    const cutoff = addHours(now, -windowHours);
+
+    const due = await this.db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(and(eq(orders.status, 'DISPUTED'), lte(orders.disputedAt, cutoff)))
+      .limit(100);
+
+    let settled = 0;
+    for (const row of due) {
+      try {
+        await this.db.transaction(async (tx) => {
+          const [order] = await tx.select().from(orders).where(eq(orders.id, row.id)).for('update');
+          if (!order || order.status !== 'DISPUTED') return;
+
+          const [openReport] = await tx
+            .select({ id: reports.id })
+            .from(reports)
+            .where(and(eq(reports.orderId, order.id), eq(reports.status, 'PENDING')))
+            .limit(1);
+          if (openReport) return;
+
+          await this.settleCompletion(tx, order, now, null);
+        });
+        settled += 1;
+      } catch (error) {
+        this.logger.warn(`Failed to settle disputed order ${row.id}: ${(error as Error).message}`);
+      }
+    }
+    return settled;
   }
 
   private async settleCompletion(
@@ -628,7 +926,7 @@ export class OrdersService {
     const [completed] = await tx
       .update(orders)
       .set({
-        status: 'COMPLETED',
+        status: 'SETTLED',
         endedAt: order.scheduledEndAt ?? now,
         playerPayout: settlement.payout,
         updatedAt: now,
@@ -638,10 +936,10 @@ export class OrdersService {
 
     await tx.insert(orderStatusHistory).values({
       orderId: order.id,
-      fromStatus: 'ACCEPTED',
-      toStatus: 'COMPLETED',
+      fromStatus: order.status,
+      toStatus: 'SETTLED',
       actorId,
-      reason: actorId ? 'Completed by participant' : 'Completed automatically after the scheduled end',
+      reason: actorId ? 'Người tham gia xác nhận hoàn thành' : 'Hết thời gian khiếu nại mà không có báo cáo',
     });
 
     await tx
@@ -652,14 +950,14 @@ export class OrdersService {
     await this.notifications.sendMany(tx, [
       {
         userId: order.hirerId,
-        title: 'Session completed',
-        body: 'Your session is complete. Leave a rating to help the community.',
+        title: 'Lượt thuê hoàn thành',
+        body: 'Lượt thuê đã hoàn thành. Hãy đánh giá để giúp cộng đồng.',
         referenceUrl: `/orders/${order.id}`,
       },
       {
         userId: order.playerId,
-        title: 'Session completed',
-        body: `Your earnings are pending and will become available shortly.`,
+        title: 'Lượt thuê hoàn thành',
+        body: 'Thu nhập đang chờ và sẽ khả dụng trong ít phút.',
         referenceUrl: `/orders/${order.id}`,
       },
     ]);
@@ -671,19 +969,19 @@ export class OrdersService {
   private async expireOrder(orderId: string, now: Date): Promise<void> {
     await this.db.transaction(async (tx) => {
       const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).for('update');
-      if (!order || order.status !== 'PROCESSING') return;
+      if (!order || order.status !== 'PROPOSED') return;
 
       await tx
         .update(orders)
-        .set({ status: 'EXPIRED', endedAt: now, updatedAt: now })
+        .set({ status: 'CLOSED', closeReason: 'EXPIRED', endedAt: now, updatedAt: now })
         .where(eq(orders.id, order.id));
 
       await tx.insert(orderStatusHistory).values({
         orderId: order.id,
-        fromStatus: 'PROCESSING',
-        toStatus: 'EXPIRED',
+        fromStatus: 'PROPOSED',
+        toStatus: 'CLOSED',
         actorId: null,
-        reason: 'The player did not respond before the deadline',
+        reason: 'Người chơi không phản hồi trước hạn',
       });
 
       await this.behavior.adjust(
@@ -692,50 +990,133 @@ export class OrdersService {
         'ORDER_EXPIRED',
         { points: -1, satisfaction: -2 },
         order.id,
-        'Missed hire request',
+        'Bỏ lỡ yêu cầu thuê',
       );
 
-      await tx
-        .update(users)
-        .set({ isPlayer: false, status: 'ONLINE', updatedAt: now })
-        .where(eq(users.id, order.playerId));
-
+      // Missing one request costs behaviour points. It used to also switch
+      // player mode off and force the player back to ONLINE, so one missed
+      // notification while asleep unpublished a player's whole listing and put
+      // them online against their will. One strike per offence is enough.
       await this.notifications.sendMany(tx, [
         {
           userId: order.playerId,
-          title: 'Hire request expired',
-          body: 'You missed a hire request, so player mode was switched off. Turn it back on when you are ready.',
+          title: 'Yêu cầu thuê đã hết hạn',
+          body: 'Yêu cầu thuê đã hết hạn trước khi bạn phản hồi. Điểm hành vi của bạn đã bị điều chỉnh.',
           referenceUrl: `/orders/${order.id}`,
         },
         {
           userId: order.hirerId,
-          title: 'Hire request expired',
-          body: 'The player did not respond in time. No funds were taken.',
+          title: 'Yêu cầu thuê đã hết hạn',
+          body: 'Người chơi không phản hồi kịp. Bạn chưa bị trừ khoản nào.',
           referenceUrl: `/orders/${order.id}`,
         },
       ]);
     });
   }
 
-  private async assertNoActiveOrder(hirerId: string, playerId: string): Promise<void> {
-    const [active] = await this.db
+  /**
+   * `startsAt` is what turns the hours a player publishes into a booking. When
+   * it is absent the session starts the moment the player accepts, which is the
+   * "hire now" path and behaves exactly as it always did.
+   */
+  private parseRequestedStart(value?: string): Date | null {
+    if (value === undefined) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      throw AppError.unprocessable(ErrorCode.validationFailed, 'startsAt is not a valid ISO-8601 timestamp');
+    }
+    // Published slots are whole minutes, so a start carrying seconds would make
+    // the coverage arithmetic one minute stricter than the player intended.
+    return new Date(Math.floor(parsed.getTime() / MS_MINUTE) * MS_MINUTE);
+  }
+
+  private async resolveBookedSlot(
+    tx: DbExecutor,
+    args: { playerId: string; hours: number; requestedStart: Date; now: Date },
+  ): Promise<{ startsAt: Date; scheduledEndAt: Date }> {
+    if (args.requestedStart.getTime() <= args.now.getTime()) {
+      throw AppError.conflict(
+        ErrorCode.slotConflict,
+        'The chosen start time has already passed; hire now or pick another slot',
+      );
+    }
+    const horizon = args.now.getTime() + BOOKING_HORIZON_DAYS * MS_DAY;
+    if (args.requestedStart.getTime() > horizon) {
+      throw AppError.badRequest(
+        ErrorCode.slotOutsideAvailability,
+        `Sessions can only be booked up to ${BOOKING_HORIZON_DAYS} days ahead`,
+      );
+    }
+
+    const windows = await tx
+      .select({
+        dayOfWeek: availabilityWindows.dayOfWeek,
+        startMinute: availabilityWindows.startMinute,
+        endMinute: availabilityWindows.endMinute,
+      })
+      .from(availabilityWindows)
+      .where(eq(availabilityWindows.userId, args.playerId));
+
+    if (windows.length === 0) {
+      throw AppError.badRequest(
+        ErrorCode.playerUnavailable,
+        'This player has not published their hours, so they cannot be booked in advance',
+      );
+    }
+
+    const scheduledEndAt = addHours(args.requestedStart, args.hours);
+    if (!isSlotCovered(args.requestedStart, scheduledEndAt, windows, this.timeZone)) {
+      throw AppError.unprocessable(
+        ErrorCode.slotOutsideAvailability,
+        'That time is outside the hours this player publishes',
+      );
+    }
+
+    return { startsAt: args.requestedStart, scheduledEndAt };
+  }
+
+  /**
+   * A proposal reserves nothing, so two hirers can put requests on the same free
+   * slot; only one of them may end up owning it. The overlap test is a range
+   * question, which no unique index can answer, so it runs here under
+   * `lockCalendars` and `orders_one_live_per_*` stays as the backstop for the
+   * one case that must never exist: two sessions running at once.
+   */
+  private async assertSlotFree(
+    tx: DbExecutor,
+    args: { hirerId: string; playerId: string; startsAt: Date; scheduledEndAt: Date; orderId?: string },
+  ): Promise<void> {
+    const filters = [
+      inArray(orders.status, [...SESSION_STATUSES]),
+      lt(orders.startsAt, args.scheduledEndAt),
+      gt(orders.scheduledEndAt, args.startsAt),
+      or(eq(orders.hirerId, args.hirerId), eq(orders.playerId, args.playerId)),
+    ];
+    if (args.orderId) filters.push(ne(orders.id, args.orderId));
+
+    const [conflict] = await tx
       .select({ id: orders.id, hirerId: orders.hirerId })
       .from(orders)
-      .where(
-        and(
-          or(eq(orders.hirerId, hirerId), eq(orders.playerId, playerId)),
-          inArray(orders.status, [...ACTIVE_STATUSES]),
-        ),
-      )
+      .where(and(...filters))
       .limit(1);
 
-    if (active) {
-      throw AppError.conflict(
-        ErrorCode.activeOrderExists,
-        active.hirerId === hirerId
-          ? 'You already have an active order'
-          : 'This player is already handling another order',
-      );
+    if (!conflict) return;
+    throw AppError.conflict(
+      ErrorCode.slotConflict,
+      conflict.hirerId === args.hirerId
+        ? 'You already have another session at that time'
+        : 'This player already has a session at that time',
+    );
+  }
+
+  /**
+   * Transaction-scoped advisory locks taken in a stable order, so two bookings
+   * for the same player cannot interleave and cannot deadlock against each
+   * other. A `hashtext` collision only serializes a few extra bookings.
+   */
+  private async lockCalendars(tx: DbExecutor, userIds: readonly string[]): Promise<void> {
+    for (const userId of [...new Set(userIds)].sort()) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${userId}))`);
     }
   }
 
@@ -751,7 +1132,7 @@ export class OrdersService {
       orderId: string;
       actorId: string;
       role: 'player' | 'hirer' | 'participant';
-      expected: OrderStatus;
+      expected: readonly OrderStatus[];
       statusMessage?: string;
     },
   ): Promise<Order> {
@@ -772,10 +1153,10 @@ export class OrdersService {
       throw AppError.forbidden(ErrorCode.orderNotParticipant, 'You are not a participant of this order');
     }
 
-    if (order.status !== params.expected) {
+    if (!params.expected.includes(order.status)) {
       throw AppError.conflict(
         ErrorCode.invalidOrderState,
-        params.statusMessage ?? `Order is ${order.status}, not ${params.expected}`,
+        params.statusMessage ?? `Order is ${order.status}, not ${params.expected.join(' or ')}`,
       );
     }
 
@@ -788,7 +1169,7 @@ export class OrdersService {
     const userIds = [...new Set(rows.flatMap((row) => [row.hirerId, row.playerId]))];
     const orderIds = rows.map((row) => row.id);
 
-    const [userRows, gameRows, ratedRows, feedbackHours, holdRows] = await Promise.all([
+    const [userRows, gameRows, ratedRows, feedbackHours, disputeHours, holdRows] = await Promise.all([
       this.db.select().from(users).where(inArray(users.id, userIds)),
       this.db
         .select({
@@ -806,6 +1187,7 @@ export class OrdersService {
         .from(ratings)
         .where(and(inArray(ratings.orderId, orderIds), eq(ratings.raterId, viewerId))),
       this.configs.getNumber(CONFIG_KEYS.feedbackWindowHours),
+      this.configs.getNumber(CONFIG_KEYS.disputeWindowHours),
       this.db
         .select({ orderId: escrowHolds.orderId, status: escrowHolds.status })
         .from(escrowHolds)
@@ -835,6 +1217,10 @@ export class OrdersService {
       const withinWindow =
         order.endedAt !== null &&
         now.getTime() <= order.endedAt.getTime() + feedbackHours * MS_HOUR;
+      const disputeDeadline =
+        order.status === 'DISPUTED' && order.disputedAt
+          ? addHours(order.disputedAt, disputeHours).toISOString()
+          : null;
 
       return {
         id: order.id,
@@ -846,10 +1232,14 @@ export class OrdersService {
         playerPayout: order.playerPayout,
         message: order.message,
         reason: order.reason,
+        closeReason: order.closeReason,
+        endedEarlyBy: order.endedEarlyBy,
         respondBy: order.respondBy.toISOString(),
         startsAt: order.startsAt?.toISOString() ?? null,
         scheduledEndAt: order.scheduledEndAt?.toISOString() ?? null,
         endedAt: order.endedAt?.toISOString() ?? null,
+        disputedAt: order.disputedAt?.toISOString() ?? null,
+        disputeDeadlineAt: disputeDeadline,
         createdAt: order.createdAt.toISOString(),
         updatedAt: order.updatedAt.toISOString(),
         hirer: toUserSummary(hirer, { includeEmail: isParticipant }),
@@ -857,7 +1247,7 @@ export class OrdersService {
         games: gameMap.get(order.id) ?? [],
         canRate:
           isParticipant &&
-          (FINISHED_STATUSES as readonly string[]).includes(order.status) &&
+          (FEEDBACK_STATUSES as readonly string[]).includes(order.status) &&
           withinWindow &&
           !ratedSet.has(order.id),
         hasRated: ratedSet.has(order.id),

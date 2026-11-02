@@ -63,7 +63,7 @@ export class BehaviorService {
         .select()
         .from(behaviorHistory)
         .where(where)
-        .orderBy(desc(behaviorHistory.createdAt))
+        .orderBy(desc(behaviorHistory.createdAt), desc(behaviorHistory.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(behaviorHistory).where(where),
@@ -97,8 +97,9 @@ export class BehaviorService {
       throw AppError.badRequest(ErrorCode.validationFailed, 'rate must be between 1 and 5');
     }
 
-    if (effect.points === undefined && effect.satisfaction === undefined) return;
-
+    // A 3-star rating carries no behaviour delta, but it still moves the rating
+    // counters. Returning early for the empty effect used to skip the recompute
+    // and leave ratingSum/ratingCount stale until some unrelated event fixed them.
     await this.adjust(executor, userId, 'RATING_RECEIVED', effect, ratingId);
     await this.stats.recompute(userId, executor);
   }
@@ -111,20 +112,20 @@ export class BehaviorService {
     referenceId?: string,
     note?: string,
   ): Promise<{ points: number; satisfaction: number }> {
-    const [current] = await executor
+    // Upsert-then-lock, the same shape `getOrCreateWallet`/`lockWallet` use.
+    // Reading first and writing later loses one of two concurrent penalties.
+    await executor.insert(behaviorPoints).values({ userId }).onConflictDoNothing();
+    const [base] = await executor
       .select()
       .from(behaviorPoints)
       .where(eq(behaviorPoints.userId, userId))
-      .limit(1);
+      .limit(1)
+      .for('update');
 
-    if (!current) {
-      await executor
-        .insert(behaviorPoints)
-        .values({ userId })
-        .onConflictDoNothing();
+    if (!base) {
+      throw AppError.notFound(ErrorCode.userNotFound, 'Behaviour record could not be created for this user');
     }
 
-    const base = current ?? { points: 100, satisfaction: 100 };
     const nextPoints = change.points === undefined ? base.points : clamp(base.points + change.points);
     const nextSatisfaction =
       change.satisfaction === undefined ? base.satisfaction : clamp(base.satisfaction + change.satisfaction);

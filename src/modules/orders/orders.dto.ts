@@ -7,6 +7,7 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
@@ -21,15 +22,20 @@ import { PageQueryDto } from '../../common/pagination/pagination';
 import { UserSummary } from '../users/users.dto';
 
 export const ORDER_STATUSES = [
-  'PROCESSING',
-  'ACCEPTED',
-  'COMPLETED',
-  'CANCELLED',
-  'REJECTED',
+  'PROPOSED',
+  'SCHEDULED',
+  'LIVE',
+  'DISPUTED',
+  'ENDED_EARLY',
+  'SETTLED',
+  'CLOSED',
+] as const;
+
+export const ORDER_CLOSE_REASONS = [
+  'REJECTED_BY_PLAYER',
+  'CANCELLED_BY_HIRER',
   'EXPIRED',
-  'ENDED_EARLY_BY_HIRER',
-  'ENDED_EARLY_BY_PLAYER',
-  'INTERRUPTED',
+  'INTERRUPTED_BY_ADMIN',
 ] as const;
 
 export class CreateOrderDto {
@@ -57,6 +63,15 @@ export class CreateOrderDto {
   @ArrayUnique()
   @IsUUID('4', { each: true })
   gameIds: string[];
+
+  @ApiPropertyOptional({
+    format: 'date-time',
+    description:
+      'Booked start of the session in the app timezone. Omit to hire immediately, which starts the session when the player accepts.',
+  })
+  @IsOptional()
+  @IsISO8601()
+  startsAt?: string;
 }
 
 export class RejectOrderDto {
@@ -68,6 +83,14 @@ export class RejectOrderDto {
 }
 
 export class EndEarlyDto {
+  @ApiPropertyOptional({ maxLength: 500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
+export class CancelOrderDto {
   @ApiPropertyOptional({ maxLength: 500 })
   @IsOptional()
   @IsString()
@@ -121,6 +144,20 @@ export class OrderView {
   @ApiProperty({ nullable: true })
   reason: string | null;
 
+  @ApiProperty({
+    enum: ORDER_CLOSE_REASONS,
+    nullable: true,
+    description: "Set exactly when status is CLOSED: why the order ended without a session",
+  })
+  closeReason: (typeof ORDER_CLOSE_REASONS)[number] | null;
+
+  @ApiProperty({
+    enum: ['HIRER', 'PLAYER'],
+    nullable: true,
+    description: 'Set exactly when status is ENDED_EARLY: who stopped the session',
+  })
+  endedEarlyBy: 'HIRER' | 'PLAYER' | null;
+
   @ApiProperty({ format: 'date-time' })
   respondBy: string;
 
@@ -132,6 +169,16 @@ export class OrderView {
 
   @ApiProperty({ format: 'date-time', nullable: true })
   endedAt: string | null;
+
+  @ApiProperty({ format: 'date-time', nullable: true, description: 'When this order entered DISPUTED' })
+  disputedAt: string | null;
+
+  @ApiProperty({
+    format: 'date-time',
+    nullable: true,
+    description: 'When the payout is released automatically if nobody objects. Only set while DISPUTED.',
+  })
+  disputeDeadlineAt: string | null;
 
   @ApiProperty({ format: 'date-time' })
   createdAt: string;

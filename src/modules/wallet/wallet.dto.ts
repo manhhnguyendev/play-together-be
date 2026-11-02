@@ -1,6 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 import { MAX_DEPOSIT, MIN_DEPOSIT, MIN_WITHDRAWAL } from '../../common/money/money';
 import { PageMetaDto } from '../../common/openapi/paginated.dto';
 import { PageQueryDto } from '../../common/pagination/pagination';
@@ -78,11 +89,14 @@ export class ResolveWithdrawalDto {
   @IsIn(['PAID', 'REJECTED'])
   status: 'PAID' | 'REJECTED';
 
-  @ApiPropertyOptional({ maxLength: 255 })
-  @IsOptional()
+  @ApiProperty({
+    maxLength: 255,
+    description: 'Required: a payout decision moves real money and is audited with this note',
+  })
   @IsString()
+  @MinLength(3)
   @MaxLength(255)
-  note?: string;
+  note: string;
 }
 
 export class MomoIpnDto {

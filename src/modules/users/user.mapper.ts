@@ -13,6 +13,7 @@ export function toUserSummary(user: User, options: { includeEmail?: boolean } = 
     bio: user.bio,
     status: user.status,
     role: user.role,
+    ...(options.includeEmail ? { adminRole: user.adminRole } : {}),
     isActive: user.isActive,
     isPlayer: user.isPlayer,
     pricePerHour: user.pricePerHour,

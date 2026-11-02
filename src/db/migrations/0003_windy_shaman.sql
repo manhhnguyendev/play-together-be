@@ -1,0 +1,3 @@
+ALTER TABLE "withdrawals" ADD COLUMN "processed_by" uuid;--> statement-breakpoint
+ALTER TABLE "withdrawals" ADD CONSTRAINT "withdrawals_processed_by_users_id_fk" FOREIGN KEY ("processed_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE UNIQUE INDEX "withdrawals_provider_txn_key" ON "withdrawals" USING btree ("provider","provider_txn_id") WHERE "withdrawals"."provider_txn_id" is not null;

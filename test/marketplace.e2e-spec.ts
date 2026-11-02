@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import request from 'supertest';
-import { orders } from '../src/db/schema';
+import { orders, pendingCredits, wallets } from '../src/db/schema';
 import { createTestApp, TEST_ADMIN, TEST_DEMO_PASSWORD, type TestApp } from './app.helper';
 
 const API = '/api/v2';
@@ -73,7 +73,7 @@ describe('Marketplace order lifecycle (e2e)', () => {
       .expect(201);
 
     expect(response.body).toMatchObject({
-      status: 'PROCESSING',
+      status: 'PROPOSED',
       hours: 1,
       hourlyRate: 80_000,
       totalPrice: 80_000,
@@ -89,7 +89,7 @@ describe('Marketplace order lifecycle (e2e)', () => {
       .expect(200);
 
     expect(response.body).toMatchObject({
-      status: 'ACCEPTED',
+      status: 'LIVE',
       escrowStatus: 'HELD',
       playerPayout: null,
     });
@@ -112,7 +112,7 @@ describe('Marketplace order lifecycle (e2e)', () => {
       .expect(200);
 
     expect(response.body).toMatchObject({
-      status: 'COMPLETED',
+      status: 'SETTLED',
       escrowStatus: 'SETTLED',
       playerPayout: 72_000,
       feeBps: 1000,
@@ -213,6 +213,10 @@ describe('Marketplace order lifecycle (e2e)', () => {
     const wallet = await http.get(`${API}/wallet`).set(bearer(hirer.accessToken)).expect(200);
     hirerBalanceBeforeRefund = wallet.body.availableBalance;
 
+    const playerWalletBefore = await http.get(`${API}/wallet`).set(bearer(player2.accessToken)).expect(200);
+    expect(playerWalletBefore.body.pendingBalance).toBe(54_000);
+    expect(playerWalletBefore.body.pendingCredits).toHaveLength(1);
+
     const resolved = await http
       .patch(`${API}/admin/reports/${reportId}`)
       .set(bearer(admin.accessToken))
@@ -229,6 +233,21 @@ describe('Marketplace order lifecycle (e2e)', () => {
 
     const refundedWallet = await http.get(`${API}/wallet`).set(bearer(hirer.accessToken)).expect(200);
     expect(refundedWallet.body.availableBalance).toBe(hirerBalanceBeforeRefund + 54_000);
+
+    // The refund came out of earnings that were still pending. Those earnings
+    // are rows, not a number, so the claw-back has to retire the row too —
+    // otherwise the release job later finds a credit with no money behind it.
+    const [playerWalletRow] = await harness.db
+      .select()
+      .from(wallets)
+      .where(eq(wallets.userId, player2.user.id));
+    expect(playerWalletRow.availableBalance).toBe(playerWalletBefore.body.availableBalance);
+
+    const openCredits = await harness.db
+      .select()
+      .from(pendingCredits)
+      .where(and(eq(pendingCredits.walletId, playerWalletRow.id), isNull(pendingCredits.releasedAt)));
+    expect(openCredits).toHaveLength(0);
 
     const behavior = await http.get(`${API}/users/${player2.user.id}/behavior`).expect(200);
     expect(behavior.body).toMatchObject({ points: 90, satisfaction: 95 });

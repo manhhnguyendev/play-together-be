@@ -60,6 +60,14 @@ export function ratingAverage(ratingSum: number, ratingCount: number): number {
   return Math.round((ratingSum / ratingCount) * 100) / 100;
 }
 
+/** Money text for user-facing Vietnamese copy: `1.500.000 đ`. */
+export function formatVnd(amount: number): string {
+  const digits = Math.round(Math.abs(amount))
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${amount < 0 ? '-' : ''}${digits} đ`;
+}
+
 export function rankingPointsOf(stats: {
   ratingSum: number;
   ratingCount: number;

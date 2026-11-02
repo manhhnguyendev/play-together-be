@@ -1,14 +1,16 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, count, desc, eq, inArray } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import { AUDIT_ACTIONS, AuditService } from '../../common/audit/audit.service';
 import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
 import { isUniqueViolation } from '../../common/errors/pg-errors';
 import { offsetOf, paginated, type Paginated } from '../../common/pagination/pagination';
+import type { AuthUser } from '../../common/security/auth-user';
 import { addHours, Clock } from '../../common/time/time';
 import { CONFIG_KEYS } from '../../db/schema';
-import { orders, ratings, reports, users, type Rating } from '../../db/schema';
+import { FEEDBACK_ORDER_STATUSES, orders, ratings, reports, users, type Rating } from '../../db/schema';
 import { BehaviorService, RATING_EFFECTS, type BehaviorChange } from '../behavior/behavior.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SystemConfigService } from '../system-config/system-config.service';
@@ -22,7 +24,7 @@ import type {
   ResolveViolationDto,
 } from './ratings.dto';
 
-const RATEABLE_STATUSES = ['COMPLETED', 'ENDED_EARLY_BY_HIRER', 'ENDED_EARLY_BY_PLAYER'] as const;
+const RATEABLE_STATUSES = FEEDBACK_ORDER_STATUSES;
 
 type PartyRow = { id: string; name: string; avatarUrl: string | null };
 
@@ -41,6 +43,7 @@ export class RatingsService {
     private readonly behavior: BehaviorService,
     private readonly stats: StatsService,
     private readonly notifications: NotificationsService,
+    private readonly audit: AuditService,
   ) {}
 
   async create(raterId: string, orderId: string, rate: number, comment?: string): Promise<RatingDto> {
@@ -104,8 +107,8 @@ export class RatingsService {
 
         await this.notifications.send(tx, {
           userId: rateeId,
-          title: `You received a ${rate}-star rating`,
-          body: `${rater?.name ?? 'Another user'} rated your session: ${rate} stars${comment ? ` — ${comment}` : ''}`,
+          title: `Bạn nhận được đánh giá ${rate} sao`,
+          body: `${rater?.name ?? 'Một người dùng khác'} đã đánh giá lượt thuê: ${rate} sao${comment ? ` — ${comment}` : ''}`,
           referenceUrl: `/orders/${orderId}`,
         });
 
@@ -124,12 +127,16 @@ export class RatingsService {
     if (query.rate !== undefined) filters.push(eq(ratings.rate, query.rate));
     const where = and(...filters);
 
-    const orderBy =
-      query.sort === 'highest'
+    const orderBy = [
+      ...(query.sort === 'highest'
         ? [desc(ratings.rate), desc(ratings.createdAt)]
         : query.sort === 'lowest'
           ? [asc(ratings.rate), desc(ratings.createdAt)]
-          : [desc(ratings.createdAt)];
+          : [desc(ratings.createdAt)]),
+      // Ratings stamped in the same millisecond still need one order, or a page
+      // boundary can show a row twice and hide another.
+      desc(ratings.id),
+    ];
 
     const [rows, [total]] = await Promise.all([
       this.db
@@ -227,7 +234,7 @@ export class RatingsService {
         .innerJoin(raterTable, eq(raterTable.id, ratings.raterId))
         .innerJoin(rateeTable, eq(rateeTable.id, ratings.rateeId))
         .where(where)
-        .orderBy(desc(ratings.createdAt))
+        .orderBy(desc(ratings.createdAt), desc(ratings.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(ratings).where(where),
@@ -247,7 +254,8 @@ export class RatingsService {
     );
   }
 
-  async resolveViolation(adminId: string, ratingId: string, dto: ResolveViolationDto): Promise<RatingDto> {
+  async resolveViolation(admin: AuthUser, ratingId: string, dto: ResolveViolationDto): Promise<RatingDto> {
+    const adminId = admin.id;
     const resolved = await this.db.transaction(async (tx) => {
       const [rating] = await tx.select().from(ratings).where(eq(ratings.id, ratingId)).for('update');
       if (!rating) throw AppError.notFound(ErrorCode.ratingNotFound, 'Rating not found');
@@ -280,7 +288,7 @@ export class RatingsService {
             'RATING_REVOKED',
             inverse,
             rating.id,
-            dto.note ?? 'Rating revoked after review',
+            dto.note ?? 'Đánh giá bị gỡ sau khi kiểm duyệt',
           );
         }
         await this.stats.recompute(rating.rateeId, tx);
@@ -288,11 +296,21 @@ export class RatingsService {
 
       await this.notifications.send(tx, {
         userId: rating.rateeId,
-        title: upheld ? 'Flagged rating removed' : 'Flagged rating kept',
+        title: upheld ? 'Đánh giá bị tố đã gỡ' : 'Đánh giá vẫn được giữ',
         body: upheld
-          ? 'Your flag was upheld and the rating has been removed from your profile.'
-          : 'Your flag was reviewed and the rating stays visible on your profile.',
+          ? 'Khiếu nại của bạn được chấp nhận và đánh giá đã bị gỡ khỏi hồ sơ của bạn.'
+          : 'Khiếu nại của bạn đã được xem xét và đánh giá vẫn hiển thị trên hồ sơ.',
         referenceUrl: '/users/me',
+      });
+
+      await this.audit.log(tx, {
+        adminId: admin.id,
+        adminRole: admin.adminRole,
+        action: AUDIT_ACTIONS.ratingViolationResolve,
+        entity: 'rating',
+        entityId: rating.id,
+        reason: dto.note,
+        detail: { decision: dto.decision, rateeId: rating.rateeId, orderId: rating.orderId },
       });
 
       return updated;

@@ -3,13 +3,14 @@ import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 import type { Paginated } from '../../common/pagination/pagination';
 import type { AuthUser } from '../../common/security/auth-user';
 import { CurrentUser } from '../../common/security/current-user.decorator';
-import { Roles } from '../../common/security/decorators';
+import { Roles, AdminRoles } from '../../common/security/decorators';
 import { ListAdminReportsQuery, ReportDto, ReportPage, ResolveReportDto } from './reports.dto';
 import { ReportsService } from './reports.service';
 
 @ApiTags('admin')
 @ApiBearerAuth()
 @Roles('ADMIN')
+@AdminRoles('MODERATOR')
 @Controller('admin/reports')
 export class ReportsAdminController {
   constructor(private readonly reports: ReportsService) {}
@@ -36,6 +37,6 @@ export class ReportsAdminController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ResolveReportDto,
   ): Promise<ReportDto> {
-    return this.reports.resolve(user.id, id, dto);
+    return this.reports.resolve(user, id, dto);
   }
 }

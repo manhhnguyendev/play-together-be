@@ -9,7 +9,7 @@ import {
 import type { Paginated } from '../../common/pagination/pagination';
 import type { AuthUser } from '../../common/security/auth-user';
 import { CurrentUser } from '../../common/security/current-user.decorator';
-import { Roles } from '../../common/security/decorators';
+import { Roles, AdminRoles } from '../../common/security/decorators';
 import { CharityService } from './charity.service';
 import {
   CharityPage,
@@ -38,17 +38,23 @@ export class CharityAdminController {
   }
 
   @Post('charities')
+  @AdminRoles('FINANCE')
   @ApiOperation({ summary: 'Create a charity account and profile' })
   @ApiCreatedResponse({ type: CharityView })
-  create(@Body() dto: CreateCharityAccountDto): Promise<CharityView> {
-    return this.charities.adminCreate(dto);
+  create(@CurrentUser() admin: AuthUser, @Body() dto: CreateCharityAccountDto): Promise<CharityView> {
+    return this.charities.adminCreate(admin, dto);
   }
 
   @Patch('charities/:id')
+  @AdminRoles('FINANCE')
   @ApiOperation({ summary: 'Update a charity profile or activation state' })
   @ApiOkResponse({ type: CharityView })
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCharityAsAdminDto): Promise<CharityView> {
-    return this.charities.adminUpdate(id, dto);
+  update(
+    @CurrentUser() admin: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateCharityAsAdminDto,
+  ): Promise<CharityView> {
+    return this.charities.adminUpdate(admin, id, dto);
   }
 
   @Get('charity-withdrawals')
@@ -61,13 +67,14 @@ export class CharityAdminController {
   }
 
   @Patch('charity-withdrawals/:id')
+  @AdminRoles('FINANCE')
   @ApiOperation({ summary: 'Mark a charity payout as paid or rejected' })
   @ApiOkResponse({ type: CharityWithdrawalView })
   resolve(
-    @CurrentUser() user: AuthUser,
+    @CurrentUser() admin: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ResolveCharityWithdrawalDto,
   ): Promise<CharityWithdrawalView> {
-    return this.charities.adminResolveWithdrawal(user.id, id, dto);
+    return this.charities.adminResolveWithdrawal(admin, id, dto);
   }
 }

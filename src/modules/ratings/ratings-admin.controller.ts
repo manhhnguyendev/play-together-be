@@ -3,13 +3,14 @@ import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 import type { Paginated } from '../../common/pagination/pagination';
 import type { AuthUser } from '../../common/security/auth-user';
 import { CurrentUser } from '../../common/security/current-user.decorator';
-import { Roles } from '../../common/security/decorators';
+import { Roles, AdminRoles } from '../../common/security/decorators';
 import { ListFlaggedRatingsQuery, RatingDto, RatingPage, ResolveViolationDto } from './ratings.dto';
 import { RatingsService } from './ratings.service';
 
 @ApiTags('admin')
 @ApiBearerAuth()
 @Roles('ADMIN')
+@AdminRoles('MODERATOR')
 @Controller('admin/ratings')
 export class RatingsAdminController {
   constructor(private readonly ratings: RatingsService) {}
@@ -29,6 +30,6 @@ export class RatingsAdminController {
     @Param('id', ParseUUIDPipe) ratingId: string,
     @Body() dto: ResolveViolationDto,
   ): Promise<RatingDto> {
-    return this.ratings.resolveViolation(user.id, ratingId, dto);
+    return this.ratings.resolveViolation(user, ratingId, dto);
   }
 }

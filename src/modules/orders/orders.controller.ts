@@ -9,6 +9,7 @@ import {
 import type { AuthUser } from '../../common/security/auth-user';
 import { CurrentUser } from '../../common/security/current-user.decorator';
 import {
+  CancelOrderDto,
   CreateOrderDto,
   EndEarlyDto,
   ListOrdersQuery,
@@ -82,10 +83,16 @@ export class OrdersController {
 
   @Post(':id/cancel')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Cancel a pending hire request (hirer only)' })
+  @ApiOperation({
+    summary: 'Cancel a request, or a booking that has not started, with a full refund',
+  })
   @ApiOkResponse({ type: OrderView })
-  cancel(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
-    return this.orders.cancel(user.id, id);
+  cancel(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CancelOrderDto,
+  ) {
+    return this.orders.cancel(user.id, id, dto);
   }
 
   @Post(':id/complete')

@@ -143,6 +143,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "reason",
+            "required": false,
+            "in": "query",
+            "description": "Why the entry was removed; kept in the audit log",
+            "schema": {
+              "maxLength": 500,
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2825,15 +2835,13 @@
             "schema": {
               "type": "string",
               "enum": [
-                "PROCESSING",
-                "ACCEPTED",
-                "COMPLETED",
-                "CANCELLED",
-                "REJECTED",
-                "EXPIRED",
-                "ENDED_EARLY_BY_HIRER",
-                "ENDED_EARLY_BY_PLAYER",
-                "INTERRUPTED"
+                "PROPOSED",
+                "SCHEDULED",
+                "LIVE",
+                "DISPUTED",
+                "ENDED_EARLY",
+                "SETTLED",
+                "CLOSED"
               ]
             }
           }
@@ -2893,15 +2901,13 @@
             "schema": {
               "type": "string",
               "enum": [
-                "PROCESSING",
-                "ACCEPTED",
-                "COMPLETED",
-                "CANCELLED",
-                "REJECTED",
-                "EXPIRED",
-                "ENDED_EARLY_BY_HIRER",
-                "ENDED_EARLY_BY_PLAYER",
-                "INTERRUPTED"
+                "PROPOSED",
+                "SCHEDULED",
+                "LIVE",
+                "DISPUTED",
+                "ENDED_EARLY",
+                "SETTLED",
+                "CLOSED"
               ]
             }
           }
@@ -3099,6 +3105,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelOrderDto"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "",
@@ -3116,7 +3132,7 @@
             "bearer": []
           }
         ],
-        "summary": "Cancel a pending hire request (hirer only)",
+        "summary": "Cancel a request, or a booking that has not started, with a full refund",
         "tags": [
           "orders"
         ]
@@ -5276,6 +5292,41 @@
         "tags": [
           "admin"
         ]
+      },
+      "get": {
+        "operationId": "AdminOpsController_userDossier",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUserDossierDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Account dossier: identity, behaviour, wallet, orders and open moderation",
+        "tags": [
+          "admin:ops"
+        ]
       }
     },
     "/api/v2/admin/users/{id}/behavior": {
@@ -5625,6 +5676,727 @@
         ]
       }
     },
+    "/api/v2/admin/audit-logs": {
+      "get": {
+        "operationId": "AdminOpsController_auditLogs",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20,
+              "type": "number"
+            }
+          },
+          {
+            "name": "adminId",
+            "required": false,
+            "in": "query",
+            "description": "Only actions by this admin",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "required": false,
+            "in": "query",
+            "description": "Exact action key, e.g. withdrawal.resolve",
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "name": "entity",
+            "required": false,
+            "in": "query",
+            "description": "Entity kind, e.g. user, config, order",
+            "schema": {
+              "maxLength": 32,
+              "type": "string"
+            }
+          },
+          {
+            "name": "entityId",
+            "required": false,
+            "in": "query",
+            "description": "Only actions that touched this row",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAuditLogPage"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Back-office action trail, newest first",
+        "tags": [
+          "admin:ops"
+        ]
+      }
+    },
+    "/api/v2/admin/orders": {
+      "get": {
+        "operationId": "AdminOpsController_orders",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20,
+              "type": "number"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PROPOSED",
+                "SCHEDULED",
+                "LIVE",
+                "DISPUTED",
+                "ENDED_EARLY",
+                "SETTLED",
+                "CLOSED"
+              ]
+            }
+          },
+          {
+            "name": "hirerId",
+            "required": false,
+            "in": "query",
+            "description": "Orders where this account is the hirer",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "playerId",
+            "required": false,
+            "in": "query",
+            "description": "Orders where this account is the player",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "required": false,
+            "in": "query",
+            "description": "Search the hirer or player name",
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "createdAt",
+                "startsAt",
+                "endedAt"
+              ]
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOrderPage"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Every order on the platform, filterable by status, party and period",
+        "tags": [
+          "admin:ops"
+        ]
+      }
+    },
+    "/api/v2/admin/orders/{id}": {
+      "get": {
+        "operationId": "AdminOpsController_orderDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOrderDetailDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "One order with its parties, timeline, escrow, ledger, ratings and reports",
+        "tags": [
+          "admin:ops"
+        ]
+      }
+    },
+    "/api/v2/admin/kpis": {
+      "get": {
+        "operationId": "AdminOpsController_kpis",
+        "parameters": [
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "description": "Inclusive lower bound, ISO 8601",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "description": "Inclusive upper bound; KPIs default to now",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminKpisDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Period metrics: settlements, money moved and queue depth",
+        "tags": [
+          "admin:ops"
+        ]
+      }
+    },
+    "/api/v2/admin/money/ledger": {
+      "get": {
+        "operationId": "AdminOpsController_ledger",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20,
+              "type": "number"
+            }
+          },
+          {
+            "name": "accountType",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "USER",
+                "CHARITY",
+                "PLATFORM",
+                "ESCROW",
+                "EXTERNAL"
+              ]
+            }
+          },
+          {
+            "name": "type",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DEPOSIT",
+                "WITHDRAWAL",
+                "ESCROW_HOLD",
+                "ESCROW_RELEASE",
+                "ESCROW_REFUND",
+                "ORDER_EARNING",
+                "PLATFORM_FEE",
+                "DONATION",
+                "REPORT_REFUND",
+                "MAINTENANCE_REFUND",
+                "CHARITY_WITHDRAWAL",
+                "ADJUSTMENT"
+              ]
+            }
+          },
+          {
+            "name": "direction",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DEBIT",
+                "CREDIT"
+              ]
+            }
+          },
+          {
+            "name": "orderId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "walletId",
+            "required": false,
+            "in": "query",
+            "description": "Wallet that owns the entry",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "name": "minAmount",
+            "required": false,
+            "in": "query",
+            "description": "Only entries whose amount is at least this (VND)",
+            "schema": {
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          {
+            "name": "maxAmount",
+            "required": false,
+            "in": "query",
+            "description": "Only entries whose amount is at most this (VND)",
+            "schema": {
+              "minimum": 0,
+              "maximum": 1000000000,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLedgerPage"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Double-entry ledger with totals over the whole filtered set",
+        "tags": [
+          "admin:ops"
+        ]
+      }
+    },
+    "/api/v2/admin/money/wallets": {
+      "get": {
+        "operationId": "AdminOpsController_wallets",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20,
+              "type": "number"
+            }
+          },
+          {
+            "name": "q",
+            "required": false,
+            "in": "query",
+            "description": "Search the account name or email",
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "name": "pendingOnly",
+            "required": false,
+            "in": "query",
+            "description": "Only wallets with money waiting to be released",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminWalletPage"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Wallet balances with the money still inside the release window",
+        "tags": [
+          "admin:ops"
+        ]
+      }
+    },
+    "/api/v2/admin/money/deposits": {
+      "get": {
+        "operationId": "AdminOpsController_deposits",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20,
+              "type": "number"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDING",
+                "SUCCEEDED",
+                "FAILED"
+              ]
+            }
+          },
+          {
+            "name": "q",
+            "required": false,
+            "in": "query",
+            "description": "Search the account name or email",
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "name": "minAmount",
+            "required": false,
+            "in": "query",
+            "description": "Only deposits of at least this amount (VND)",
+            "schema": {
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          {
+            "name": "maxAmount",
+            "required": false,
+            "in": "query",
+            "description": "Only deposits of at most this amount (VND)",
+            "schema": {
+              "minimum": 0,
+              "maximum": 1000000000,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminDepositPage"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Deposit history across every provider",
+        "tags": [
+          "admin:ops"
+        ]
+      }
+    },
+    "/api/v2/admin/money/escrows": {
+      "get": {
+        "operationId": "AdminOpsController_escrows",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20,
+              "type": "number"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "HELD",
+                "SETTLED",
+                "REFUNDED",
+                "PARTIALLY_SETTLED"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminEscrowPage"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Held hirer money, split into settled, refunded and still held",
+        "tags": [
+          "admin:ops"
+        ]
+      }
+    },
     "/api/v2/health": {
       "get": {
         "operationId": "HealthController_check",
@@ -5778,6 +6550,11 @@
           "description": {
             "type": "string",
             "maxLength": 1000
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Why the value changed; kept in the audit log"
           }
         },
         "required": [
@@ -5815,6 +6592,11 @@
           "description": {
             "type": "string",
             "maxLength": 1000
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Why the value changed; kept in the audit log"
           }
         }
       },
@@ -6078,6 +6860,15 @@
               "USER",
               "ADMIN",
               "CHARITY"
+            ],
+            "type": "string"
+          },
+          "adminRole": {
+            "nullable": true,
+            "enum": [
+              "SUPER_ADMIN",
+              "MODERATOR",
+              "FINANCE"
             ],
             "type": "string"
           },
@@ -6345,6 +7136,15 @@
               "USER",
               "ADMIN",
               "CHARITY"
+            ],
+            "type": "string"
+          },
+          "adminRole": {
+            "nullable": true,
+            "enum": [
+              "SUPER_ADMIN",
+              "MODERATOR",
+              "FINANCE"
             ],
             "type": "string"
           },
@@ -7860,6 +8660,11 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          "startsAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Booked start of the session in the app timezone. Omit to hire immediately, which starts the session when the player accepts."
           }
         },
         "required": [
@@ -7899,15 +8704,13 @@
           },
           "status": {
             "enum": [
-              "PROCESSING",
-              "ACCEPTED",
-              "COMPLETED",
-              "CANCELLED",
-              "REJECTED",
-              "EXPIRED",
-              "ENDED_EARLY_BY_HIRER",
-              "ENDED_EARLY_BY_PLAYER",
-              "INTERRUPTED"
+              "PROPOSED",
+              "SCHEDULED",
+              "LIVE",
+              "DISPUTED",
+              "ENDED_EARLY",
+              "SETTLED",
+              "CLOSED"
             ],
             "type": "string"
           },
@@ -7938,6 +8741,26 @@
             "type": "string",
             "nullable": true
           },
+          "closeReason": {
+            "nullable": true,
+            "enum": [
+              "REJECTED_BY_PLAYER",
+              "CANCELLED_BY_HIRER",
+              "EXPIRED",
+              "INTERRUPTED_BY_ADMIN"
+            ],
+            "type": "string",
+            "description": "Set exactly when status is CLOSED: why the order ended without a session"
+          },
+          "endedEarlyBy": {
+            "nullable": true,
+            "enum": [
+              "HIRER",
+              "PLAYER"
+            ],
+            "type": "string",
+            "description": "Set exactly when status is ENDED_EARLY: who stopped the session"
+          },
           "respondBy": {
             "type": "string",
             "format": "date-time"
@@ -7956,6 +8779,18 @@
             "type": "string",
             "nullable": true,
             "format": "date-time"
+          },
+          "disputedAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time",
+            "description": "When this order entered DISPUTED"
+          },
+          "disputeDeadlineAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time",
+            "description": "When the payout is released automatically if nobody objects. Only set while DISPUTED."
           },
           "createdAt": {
             "type": "string",
@@ -8004,10 +8839,14 @@
           "playerPayout",
           "message",
           "reason",
+          "closeReason",
+          "endedEarlyBy",
           "respondBy",
           "startsAt",
           "scheduledEndAt",
           "endedAt",
+          "disputedAt",
+          "disputeDeadlineAt",
           "createdAt",
           "updatedAt",
           "hirer",
@@ -8046,29 +8885,25 @@
           "fromStatus": {
             "nullable": true,
             "enum": [
-              "PROCESSING",
-              "ACCEPTED",
-              "COMPLETED",
-              "CANCELLED",
-              "REJECTED",
-              "EXPIRED",
-              "ENDED_EARLY_BY_HIRER",
-              "ENDED_EARLY_BY_PLAYER",
-              "INTERRUPTED"
+              "PROPOSED",
+              "SCHEDULED",
+              "LIVE",
+              "DISPUTED",
+              "ENDED_EARLY",
+              "SETTLED",
+              "CLOSED"
             ],
             "type": "string"
           },
           "toStatus": {
             "enum": [
-              "PROCESSING",
-              "ACCEPTED",
-              "COMPLETED",
-              "CANCELLED",
-              "REJECTED",
-              "EXPIRED",
-              "ENDED_EARLY_BY_HIRER",
-              "ENDED_EARLY_BY_PLAYER",
-              "INTERRUPTED"
+              "PROPOSED",
+              "SCHEDULED",
+              "LIVE",
+              "DISPUTED",
+              "ENDED_EARLY",
+              "SETTLED",
+              "CLOSED"
             ],
             "type": "string"
           },
@@ -8096,6 +8931,15 @@
         ]
       },
       "RejectOrderDto": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "CancelOrderDto": {
         "type": "object",
         "properties": {
           "reason": {
@@ -8953,11 +9797,14 @@
           },
           "note": {
             "type": "string",
-            "maxLength": 255
+            "minLength": 3,
+            "maxLength": 255,
+            "description": "Required: a charity payout decision moves real money and is audited with this note"
           }
         },
         "required": [
-          "decision"
+          "decision",
+          "note"
         ]
       },
       "ChatMessageView": {
@@ -9409,6 +10256,15 @@
             ],
             "type": "string"
           },
+          "adminRole": {
+            "nullable": true,
+            "enum": [
+              "SUPER_ADMIN",
+              "MODERATOR",
+              "FINANCE"
+            ],
+            "type": "string"
+          },
           "status": {
             "enum": [
               "ONLINE",
@@ -9417,6 +10273,12 @@
               "MAINTAIN"
             ],
             "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Required when locking, unlocking or changing either role"
           }
         }
       },
@@ -9435,12 +10297,15 @@
           },
           "note": {
             "type": "string",
-            "maxLength": 500
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Required: a manual points change needs a reason"
           }
         },
         "required": [
           "points",
-          "satisfaction"
+          "satisfaction",
+          "note"
         ]
       },
       "BehaviorAdjustmentDto": {
@@ -9627,11 +10492,18 @@
           "referenceUrl": {
             "type": "string",
             "maxLength": 500
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Why this is being sent; recorded in the audit log"
           }
         },
         "required": [
           "title",
-          "body"
+          "body",
+          "reason"
         ]
       },
       "BroadcastResultDto": {
@@ -9651,6 +10523,11 @@
         "properties": {
           "enabled": {
             "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Recorded in the audit log next to the switch"
           }
         },
         "required": [
@@ -9766,11 +10643,14 @@
           },
           "note": {
             "type": "string",
-            "maxLength": 255
+            "minLength": 3,
+            "maxLength": 255,
+            "description": "Required: a payout decision moves real money and is audited with this note"
           }
         },
         "required": [
-          "status"
+          "status",
+          "note"
         ]
       },
       "WithdrawalResolutionDto": {
@@ -9793,6 +10673,1283 @@
         "required": [
           "id",
           "status"
+        ]
+      },
+      "AdminAuditActorDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "adminRole": {
+            "type": "string",
+            "nullable": true,
+            "description": "Null when the row predates the tier column"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "adminRole"
+        ]
+      },
+      "AdminAuditLogView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admin": {
+            "nullable": true,
+            "description": "Null once the account is deleted",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AdminAuditActorDto"
+              }
+            ]
+          },
+          "action": {
+            "type": "string",
+            "example": "withdrawal.resolve"
+          },
+          "entity": {
+            "type": "string",
+            "example": "withdrawal"
+          },
+          "entityId": {
+            "type": "string",
+            "nullable": true,
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "detail": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "admin",
+          "action",
+          "entity",
+          "entityId",
+          "reason",
+          "detail",
+          "createdAt"
+        ]
+      },
+      "AdminAuditLogPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminAuditLogView"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMetaDto"
+          }
+        },
+        "required": [
+          "items",
+          "meta"
+        ]
+      },
+      "AdminPartyRefDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "AdminOrderRowDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "enum": [
+              "PROPOSED",
+              "SCHEDULED",
+              "LIVE",
+              "DISPUTED",
+              "ENDED_EARLY",
+              "SETTLED",
+              "CLOSED"
+            ],
+            "type": "string"
+          },
+          "closeReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "endedEarlyBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "hirer": {
+            "$ref": "#/components/schemas/AdminPartyRefDto"
+          },
+          "player": {
+            "$ref": "#/components/schemas/AdminPartyRefDto"
+          },
+          "hours": {
+            "type": "number"
+          },
+          "hourlyRate": {
+            "type": "number",
+            "description": "VND per hour"
+          },
+          "totalPrice": {
+            "type": "number",
+            "description": "VND charged to the hirer"
+          },
+          "feeBps": {
+            "type": "number",
+            "description": "Basis points kept by the platform"
+          },
+          "playerPayout": {
+            "type": "number",
+            "nullable": true,
+            "description": "VND paid to the player once settled"
+          },
+          "games": {
+            "description": "Games requested on this order",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminPartyRefDto"
+            }
+          },
+          "startsAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time"
+          },
+          "scheduledEndAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time"
+          },
+          "endedAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time"
+          },
+          "disputedAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "closeReason",
+          "endedEarlyBy",
+          "hirer",
+          "player",
+          "hours",
+          "hourlyRate",
+          "totalPrice",
+          "feeBps",
+          "playerPayout",
+          "games",
+          "startsAt",
+          "scheduledEndAt",
+          "endedAt",
+          "disputedAt",
+          "createdAt"
+        ]
+      },
+      "AdminOrderPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminOrderRowDto"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMetaDto"
+          }
+        },
+        "required": [
+          "items",
+          "meta"
+        ]
+      },
+      "AdminOrderHistoryItemDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "fromStatus": {
+            "type": "string",
+            "nullable": true
+          },
+          "toStatus": {
+            "type": "string"
+          },
+          "actor": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AdminPartyRefDto"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "fromStatus",
+          "toStatus",
+          "actor",
+          "reason",
+          "createdAt"
+        ]
+      },
+      "AdminOrderEscrowDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "enum": [
+              "HELD",
+              "SETTLED",
+              "REFUNDED",
+              "PARTIALLY_SETTLED"
+            ],
+            "type": "string"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "settledAmount": {
+            "type": "number"
+          },
+          "refundedAmount": {
+            "type": "number"
+          },
+          "heldAmount": {
+            "type": "number",
+            "description": "VND still held for the hirer"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "amount",
+          "settledAmount",
+          "refundedAmount",
+          "heldAmount",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "AdminOrderLedgerDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "transactionId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Groups the debit and the credit of one movement"
+          },
+          "accountType": {
+            "enum": [
+              "USER",
+              "CHARITY",
+              "PLATFORM",
+              "ESCROW",
+              "EXTERNAL"
+            ],
+            "type": "string"
+          },
+          "direction": {
+            "enum": [
+              "DEBIT",
+              "CREDIT"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "DEPOSIT",
+              "WITHDRAWAL",
+              "ESCROW_HOLD",
+              "ESCROW_RELEASE",
+              "ESCROW_REFUND",
+              "ORDER_EARNING",
+              "PLATFORM_FEE",
+              "DONATION",
+              "REPORT_REFUND",
+              "MAINTENANCE_REFUND",
+              "CHARITY_WITHDRAWAL",
+              "ADJUSTMENT"
+            ],
+            "type": "string"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "transactionId",
+          "accountType",
+          "direction",
+          "type",
+          "amount",
+          "note",
+          "createdAt"
+        ]
+      },
+      "AdminOrderPendingCreditDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "availableAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "releasedAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "amount",
+          "availableAt",
+          "releasedAt"
+        ]
+      },
+      "AdminOrderRatingDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "rater": {
+            "$ref": "#/components/schemas/AdminPartyRefDto"
+          },
+          "ratee": {
+            "$ref": "#/components/schemas/AdminPartyRefDto"
+          },
+          "rate": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "comment": {
+            "type": "string",
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "violationStatus": {
+            "enum": [
+              "NONE",
+              "FLAGGED",
+              "UPHELD",
+              "DISMISSED"
+            ],
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "rater",
+          "ratee",
+          "rate",
+          "comment",
+          "isActive",
+          "violationStatus",
+          "createdAt"
+        ]
+      },
+      "AdminOrderReportDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reporter": {
+            "$ref": "#/components/schemas/AdminPartyRefDto"
+          },
+          "target": {
+            "$ref": "#/components/schemas/AdminPartyRefDto"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "PENDING",
+              "APPROVED",
+              "REJECTED"
+            ],
+            "type": "string"
+          },
+          "resolutionNote": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "reporter",
+          "target",
+          "message",
+          "status",
+          "resolutionNote",
+          "createdAt"
+        ]
+      },
+      "AdminOrderDetailDto": {
+        "type": "object",
+        "properties": {
+          "order": {
+            "$ref": "#/components/schemas/AdminOrderRowDto"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "history": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminOrderHistoryItemDto"
+            }
+          },
+          "escrow": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AdminOrderEscrowDto"
+              }
+            ]
+          },
+          "ledger": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminOrderLedgerDto"
+            }
+          },
+          "pendingCredits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminOrderPendingCreditDto"
+            }
+          },
+          "ratings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminOrderRatingDto"
+            }
+          },
+          "reports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminOrderReportDto"
+            }
+          },
+          "disputeWindowHours": {
+            "type": "number",
+            "nullable": true,
+            "description": "Hours the payout can still be objected to; null once the order left DISPUTED"
+          },
+          "disputeClosesAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time",
+            "description": "When the DISPUTED window closes"
+          }
+        },
+        "required": [
+          "order",
+          "message",
+          "reason",
+          "history",
+          "escrow",
+          "ledger",
+          "pendingCredits",
+          "ratings",
+          "reports",
+          "disputeWindowHours",
+          "disputeClosesAt"
+        ]
+      },
+      "AdminUserBehaviorBlock": {
+        "type": "object",
+        "properties": {
+          "points": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "satisfaction": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "history": {
+            "description": "Newest first, at most the twenty last movements",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BehaviorHistoryItemDto"
+            }
+          }
+        },
+        "required": [
+          "points",
+          "satisfaction",
+          "history"
+        ]
+      },
+      "AdminUserWalletBlock": {
+        "type": "object",
+        "properties": {
+          "walletId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "availableBalance": {
+            "type": "number",
+            "description": "VND the account can spend or withdraw right now"
+          },
+          "pendingAmount": {
+            "type": "number",
+            "description": "VND earned but still inside its release window"
+          },
+          "pendingCount": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "walletId",
+          "availableBalance",
+          "pendingAmount",
+          "pendingCount",
+          "updatedAt"
+        ]
+      },
+      "AdminUserOrderBlock": {
+        "type": "object",
+        "properties": {
+          "asHirer": {
+            "type": "number",
+            "description": "Sessions this account hired somebody for"
+          },
+          "asPlayer": {
+            "type": "number",
+            "description": "Sessions this account played in"
+          },
+          "open": {
+            "type": "number",
+            "description": "Sessions in either role that have not reached an end"
+          },
+          "recent": {
+            "description": "Five newest sessions in either role",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminOrderRowDto"
+            }
+          }
+        },
+        "required": [
+          "asHirer",
+          "asPlayer",
+          "open",
+          "recent"
+        ]
+      },
+      "AdminUserModerationBlock": {
+        "type": "object",
+        "properties": {
+          "openReportsAgainst": {
+            "type": "number",
+            "description": "Reports naming this account that no decision has been made on"
+          },
+          "reportsFiled": {
+            "type": "number",
+            "description": "Reports this account filed against somebody else"
+          },
+          "flaggedRatings": {
+            "type": "number",
+            "description": "Ratings received that are currently flagged"
+          },
+          "pendingWithdrawals": {
+            "type": "number",
+            "description": "Payout requests still waiting for finance"
+          },
+          "pendingWithdrawalAmount": {
+            "type": "number",
+            "description": "VND waiting to be paid out across those requests"
+          }
+        },
+        "required": [
+          "openReportsAgainst",
+          "reportsFiled",
+          "flaggedRatings",
+          "pendingWithdrawals",
+          "pendingWithdrawalAmount"
+        ]
+      },
+      "AdminUserDossierDto": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "description": "Account view with the email and back-office tier",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/UserSummary"
+              }
+            ]
+          },
+          "behavior": {
+            "$ref": "#/components/schemas/AdminUserBehaviorBlock"
+          },
+          "wallet": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AdminUserWalletBlock"
+              }
+            ]
+          },
+          "orders": {
+            "$ref": "#/components/schemas/AdminUserOrderBlock"
+          },
+          "moderation": {
+            "$ref": "#/components/schemas/AdminUserModerationBlock"
+          }
+        },
+        "required": [
+          "account",
+          "behavior",
+          "wallet",
+          "orders",
+          "moderation"
+        ]
+      },
+      "KpiOrderBlock": {
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "number"
+          },
+          "settled": {
+            "type": "number"
+          },
+          "endedEarly": {
+            "type": "number"
+          },
+          "disputed": {
+            "type": "number"
+          },
+          "closed": {
+            "type": "number"
+          },
+          "completed": {
+            "type": "number",
+            "description": "Sessions that actually ran to the end inside the period"
+          },
+          "endedEarlyRateBps": {
+            "type": "number",
+            "description": "Share of finished sessions that were cut short, in basis points (0..10000)"
+          }
+        },
+        "required": [
+          "created",
+          "settled",
+          "endedEarly",
+          "disputed",
+          "closed",
+          "completed",
+          "endedEarlyRateBps"
+        ]
+      },
+      "KpiMoneyBlock": {
+        "type": "object",
+        "properties": {
+          "playerPayouts": {
+            "type": "number",
+            "description": "VND handed to players for orders settled in the period"
+          },
+          "platformFees": {
+            "type": "number",
+            "description": "VND kept by the platform for orders settled in the period"
+          },
+          "refunds": {
+            "type": "number",
+            "description": "VND refunded to hirers in the period"
+          },
+          "payoutsPaid": {
+            "type": "number",
+            "description": "VND of payouts marked PAID in the period"
+          },
+          "charityPayoutsPaid": {
+            "type": "number",
+            "description": "VND of charity payouts marked PAID in the period"
+          },
+          "depositsSucceeded": {
+            "type": "number",
+            "description": "VND deposited and SUCCEEDED in the period"
+          },
+          "donations": {
+            "type": "number",
+            "description": "VND donated in the period"
+          }
+        },
+        "required": [
+          "playerPayouts",
+          "platformFees",
+          "refunds",
+          "payoutsPaid",
+          "charityPayoutsPaid",
+          "depositsSucceeded",
+          "donations"
+        ]
+      },
+      "KpiQueueBlock": {
+        "type": "object",
+        "properties": {
+          "pendingUserWithdrawals": {
+            "type": "number"
+          },
+          "pendingUserWithdrawalAmount": {
+            "type": "number"
+          },
+          "pendingCharityWithdrawals": {
+            "type": "number"
+          },
+          "pendingCharityWithdrawalAmount": {
+            "type": "number"
+          },
+          "escrowHeld": {
+            "type": "number",
+            "description": "VND held in escrow right now"
+          },
+          "pendingCredits": {
+            "type": "number",
+            "description": "VND waiting for its release window"
+          },
+          "pendingReports": {
+            "type": "number"
+          },
+          "pendingFeedback": {
+            "type": "number"
+          },
+          "flaggedRatings": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "pendingUserWithdrawals",
+          "pendingUserWithdrawalAmount",
+          "pendingCharityWithdrawals",
+          "pendingCharityWithdrawalAmount",
+          "escrowHeld",
+          "pendingCredits",
+          "pendingReports",
+          "pendingFeedback",
+          "flaggedRatings"
+        ]
+      },
+      "KpiPeopleBlock": {
+        "type": "object",
+        "properties": {
+          "registered": {
+            "type": "number"
+          },
+          "activePlayers": {
+            "type": "number"
+          },
+          "ratingsCreated": {
+            "type": "number"
+          },
+          "averageRating": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0,
+            "maximum": 5,
+            "description": "Mean of ratings written in the period"
+          }
+        },
+        "required": [
+          "registered",
+          "activePlayers",
+          "ratingsCreated",
+          "averageRating"
+        ]
+      },
+      "AdminKpisDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "orders": {
+            "$ref": "#/components/schemas/KpiOrderBlock"
+          },
+          "money": {
+            "$ref": "#/components/schemas/KpiMoneyBlock"
+          },
+          "queue": {
+            "$ref": "#/components/schemas/KpiQueueBlock"
+          },
+          "people": {
+            "$ref": "#/components/schemas/KpiPeopleBlock"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "orders",
+          "money",
+          "queue",
+          "people"
+        ]
+      },
+      "AdminLedgerView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "transactionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "accountType": {
+            "enum": [
+              "USER",
+              "CHARITY",
+              "PLATFORM",
+              "ESCROW",
+              "EXTERNAL"
+            ],
+            "type": "string"
+          },
+          "direction": {
+            "enum": [
+              "DEBIT",
+              "CREDIT"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "DEPOSIT",
+              "WITHDRAWAL",
+              "ESCROW_HOLD",
+              "ESCROW_RELEASE",
+              "ESCROW_REFUND",
+              "ORDER_EARNING",
+              "PLATFORM_FEE",
+              "DONATION",
+              "REPORT_REFUND",
+              "MAINTENANCE_REFUND",
+              "CHARITY_WITHDRAWAL",
+              "ADJUSTMENT"
+            ],
+            "type": "string"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "holder": {
+            "type": "string",
+            "nullable": true,
+            "description": "Who the entry belongs to: person, charity, escrow or platform"
+          },
+          "orderId": {
+            "type": "string",
+            "nullable": true,
+            "format": "uuid"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "transactionId",
+          "accountType",
+          "direction",
+          "type",
+          "amount",
+          "note",
+          "holder",
+          "orderId",
+          "createdAt"
+        ]
+      },
+      "AdminLedgerTotalsDto": {
+        "type": "object",
+        "properties": {
+          "debits": {
+            "type": "number",
+            "description": "VND summed over the whole filtered set, not just this page"
+          },
+          "credits": {
+            "type": "number",
+            "description": "VND summed over the whole filtered set, not just this page"
+          },
+          "entries": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "debits",
+          "credits",
+          "entries"
+        ]
+      },
+      "AdminLedgerPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminLedgerView"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMetaDto"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/AdminLedgerTotalsDto"
+          }
+        },
+        "required": [
+          "items",
+          "meta",
+          "totals"
+        ]
+      },
+      "AdminWalletView": {
+        "type": "object",
+        "properties": {
+          "walletId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "availableBalance": {
+            "type": "number"
+          },
+          "pendingAmount": {
+            "type": "number",
+            "description": "VND earned but still inside the release window"
+          },
+          "pendingCount": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "walletId",
+          "userId",
+          "name",
+          "email",
+          "availableBalance",
+          "pendingAmount",
+          "pendingCount",
+          "updatedAt"
+        ]
+      },
+      "AdminWalletPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminWalletView"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMetaDto"
+          }
+        },
+        "required": [
+          "items",
+          "meta"
+        ]
+      },
+      "AdminDepositView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "user": {
+            "$ref": "#/components/schemas/AdminPartyRefDto"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "providerTxnId": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "enum": [
+              "PENDING",
+              "SUCCEEDED",
+              "FAILED"
+            ],
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "user",
+          "amount",
+          "provider",
+          "providerTxnId",
+          "status",
+          "createdAt",
+          "completedAt"
+        ]
+      },
+      "AdminDepositPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminDepositView"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMetaDto"
+          }
+        },
+        "required": [
+          "items",
+          "meta"
+        ]
+      },
+      "AdminEscrowView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "orderId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "orderStatus": {
+            "enum": [
+              "PROPOSED",
+              "SCHEDULED",
+              "LIVE",
+              "DISPUTED",
+              "ENDED_EARLY",
+              "SETTLED",
+              "CLOSED"
+            ],
+            "type": "string"
+          },
+          "hirer": {
+            "$ref": "#/components/schemas/AdminPartyRefDto"
+          },
+          "player": {
+            "$ref": "#/components/schemas/AdminPartyRefDto"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "settledAmount": {
+            "type": "number"
+          },
+          "refundedAmount": {
+            "type": "number"
+          },
+          "heldAmount": {
+            "type": "number"
+          },
+          "status": {
+            "enum": [
+              "HELD",
+              "SETTLED",
+              "REFUNDED",
+              "PARTIALLY_SETTLED"
+            ],
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "orderId",
+          "orderStatus",
+          "hirer",
+          "player",
+          "amount",
+          "settledAmount",
+          "refundedAmount",
+          "heldAmount",
+          "status",
+          "createdAt"
+        ]
+      },
+      "AdminEscrowPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminEscrowView"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMetaDto"
+          },
+          "totalHeld": {
+            "type": "number",
+            "description": "VND still held across every escrow, not just this page"
+          }
+        },
+        "required": [
+          "items",
+          "meta",
+          "totalHeld"
         ]
       }
     }

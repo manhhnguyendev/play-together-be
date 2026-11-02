@@ -15,12 +15,24 @@ export type GoogleProfile = {
 @Injectable()
 export class GoogleAuthService {
   private readonly logger = new Logger(GoogleAuthService.name);
-  private readonly clientId: string | undefined;
   private readonly client: OAuth2Client | null;
+  /**
+   * Client IDs an ID token may have been issued to.
+   *
+   * A token carries the client ID of whoever asked Google for it, so accepting only the
+   * web client rejects tokens minted by a native build that used its own Android or iOS
+   * client. They all identify the same Google project, so they are all trustworthy.
+   */
+  private readonly audiences: string[];
 
   constructor(config: ConfigService) {
-    this.clientId = config.get<string>('GOOGLE_CLIENT_ID') || undefined;
-    this.client = this.clientId ? new OAuth2Client(this.clientId) : null;
+    this.audiences = [
+      config.get<string>('GOOGLE_CLIENT_ID'),
+      config.get<string>('GOOGLE_ANDROID_CLIENT_ID'),
+      config.get<string>('GOOGLE_IOS_CLIENT_ID'),
+    ].filter((id): id is string => Boolean(id));
+
+    this.client = this.audiences.length ? new OAuth2Client() : null;
   }
 
   get configured(): boolean {
@@ -28,7 +40,7 @@ export class GoogleAuthService {
   }
 
   async verify(idToken: string): Promise<GoogleProfile> {
-    if (!this.client || !this.clientId) {
+    if (!this.client) {
       throw AppError.unavailable(
         ErrorCode.googleNotConfigured,
         'Google sign-in is not configured on this deployment',
@@ -36,7 +48,7 @@ export class GoogleAuthService {
     }
 
     try {
-      const ticket = await this.client.verifyIdToken({ idToken, audience: this.clientId });
+      const ticket = await this.client.verifyIdToken({ idToken, audience: this.audiences });
       const payload = ticket.getPayload();
 
       if (!payload?.sub || !payload.email) {

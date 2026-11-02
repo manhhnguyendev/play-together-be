@@ -13,7 +13,10 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { genderEnum, userRoleEnum, userStatusEnum } from './enums';
+import { genderEnum, userRoleEnum, userStatusEnum, ADMIN_ROLES } from './enums';
+
+/** Inlined as literals: a CHECK constraint cannot carry query parameters. */
+const ADMIN_ROLE_SQL = ADMIN_ROLES.map((role) => `'${role}'`).join(', ');
 
 export const users = pgTable(
   'users',
@@ -23,6 +26,11 @@ export const users = pgTable(
     passwordHash: varchar('password_hash', { length: 255 }),
     googleId: varchar('google_id', { length: 255 }),
     role: userRoleEnum('role').notNull().default('USER'),
+    /**
+     * Which part of the back office the account may use. Null means none —
+     * every ordinary user, charity and past admin row.
+     */
+    adminRole: varchar('admin_role', { length: 16, enum: ADMIN_ROLES }),
     name: varchar('name', { length: 100 }).notNull(),
     dateOfBirth: date('date_of_birth', { mode: 'string' }),
     city: varchar('city', { length: 100 }),
@@ -51,11 +59,16 @@ export const users = pgTable(
       .where(sql`${t.googleId} is not null`),
     index('users_player_search_idx').on(t.isPlayer, t.status, t.ratingSum),
     index('users_role_idx').on(t.role),
+    index('users_admin_role_idx').on(t.adminRole),
     check('users_price_per_hour_check', sql`${t.pricePerHour} >= 0`),
     check('users_max_hours_check', sql`${t.maxHoursPerHire} between 1 and 12`),
     check('users_rating_count_check', sql`${t.ratingCount} >= 0`),
     check('users_rating_sum_check', sql`${t.ratingSum} between 0 and ${t.ratingCount} * 5`),
     check('users_ranking_points_check', sql`${t.rankingPoints} >= 0`),
+    check(
+      'users_admin_role_check',
+      sql`${t.adminRole} is null or ${t.adminRole} in (${sql.raw(ADMIN_ROLE_SQL)})`,
+    ),
   ],
 );
 

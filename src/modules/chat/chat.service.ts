@@ -57,7 +57,7 @@ export class ChatService {
         .select()
         .from(chats)
         .where(where)
-        .orderBy(desc(chats.createdAt))
+        .orderBy(desc(chats.createdAt), desc(chats.id))
         .limit(pageSize)
         .offset(offsetOf(page, pageSize)),
       this.db.select({ value: count() }).from(chats).where(where),
@@ -76,7 +76,7 @@ export class ChatService {
       .select()
       .from(chats)
       .where(or(eq(chats.senderId, userId), eq(chats.receiverId, userId)))
-      .orderBy(desc(chats.createdAt))
+      .orderBy(desc(chats.createdAt), desc(chats.id))
       .limit(500);
 
     const latest = new Map<string, (typeof rows)[number]>();

@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -17,8 +18,10 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
-import { Roles } from '../../common/security/decorators';
-import { CreateConfigDto, ResolvedConfigDto, UpdateConfigDto } from './config.dto';
+import type { AuthUser } from '../../common/security/auth-user';
+import { CurrentUser } from '../../common/security/current-user.decorator';
+import { AdminRoles, Roles } from '../../common/security/decorators';
+import { CreateConfigDto, DeleteConfigDto, ResolvedConfigDto, UpdateConfigDto } from './config.dto';
 import { SystemConfigService } from './system-config.service';
 
 @ApiTags('admin:configs')
@@ -36,24 +39,35 @@ export class SystemConfigAdminController {
   }
 
   @Post()
+  @AdminRoles('FINANCE')
   @ApiOperation({ summary: 'Create a configuration entry' })
   @ApiCreatedResponse({ type: ResolvedConfigDto })
-  create(@Body() dto: CreateConfigDto): Promise<ResolvedConfigDto> {
-    return this.configs.create(dto);
+  create(@CurrentUser() admin: AuthUser, @Body() dto: CreateConfigDto): Promise<ResolvedConfigDto> {
+    return this.configs.create(admin, dto);
   }
 
   @Patch(':id')
+  @AdminRoles('FINANCE')
   @ApiOperation({ summary: 'Update a configuration entry' })
   @ApiOkResponse({ type: ResolvedConfigDto })
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateConfigDto): Promise<ResolvedConfigDto> {
-    return this.configs.update(id, dto);
+  update(
+    @CurrentUser() admin: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateConfigDto,
+  ): Promise<ResolvedConfigDto> {
+    return this.configs.update(admin, id, dto);
   }
 
   @Delete(':id')
   @HttpCode(204)
+  @AdminRoles('FINANCE')
   @ApiOperation({ summary: 'Delete a non-core configuration entry' })
   @ApiNoContentResponse()
-  async remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
-    await this.configs.remove(id);
+  async remove(
+    @CurrentUser() admin: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: DeleteConfigDto,
+  ): Promise<void> {
+    await this.configs.remove(admin, id, query.reason);
   }
 }

@@ -34,6 +34,7 @@ async function main(): Promise<void> {
     console.log('Charity login: %s / %s', envString('SEED_CHARITY_EMAIL', 'charity@playtogether.local'), envString('SEED_CHARITY_PASSWORD', 'Charity@12345'));
     if (summary.demoUsers > 0) {
       console.log('Demo users:    demo.player1@playtogether.local ... demo.player6@playtogether.local / Demo@12345');
+      console.log('Demo staff:    demo.moderator@playtogether.local / demo.finance@playtogether.local / Demo@12345');
     }
   } finally {
     await connection.close();

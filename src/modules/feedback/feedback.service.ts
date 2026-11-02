@@ -30,7 +30,7 @@ export class FeedbackService {
         .select()
         .from(feedback)
         .where(where)
-        .orderBy(desc(feedback.createdAt))
+        .orderBy(desc(feedback.createdAt), desc(feedback.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(feedback).where(where),

@@ -1,6 +1,7 @@
 import {
   assertPositiveVnd,
   feeOf,
+  formatVnd,
   quoteEarlyEnd,
   rankingPointsOf,
   ratingAverage,
@@ -128,5 +129,17 @@ describe('money helpers', () => {
         }),
       ).toBe(0);
     });
+  });
+});
+
+describe('formatVnd', () => {
+  it('groups by thousands with dots and suffixes the unit', () => {
+    expect(formatVnd(1_500_000)).toBe('1.500.000 đ');
+    expect(formatVnd(50_000)).toBe('50.000 đ');
+    expect(formatVnd(0)).toBe('0 đ');
+  });
+
+  it('keeps the sign outside the grouped digits', () => {
+    expect(formatVnd(-50_000)).toBe('-50.000 đ');
   });
 });

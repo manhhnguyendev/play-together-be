@@ -1,13 +1,24 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, count, desc, eq, ilike, inArray } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import { AUDIT_ACTIONS, AuditService } from '../../common/audit/audit.service';
 import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
 import { isUniqueViolation } from '../../common/errors/pg-errors';
+import { formatVnd } from '../../common/money/money';
 import { offsetOf, paginated, type Paginated } from '../../common/pagination/pagination';
+import type { AuthUser } from '../../common/security/auth-user';
 import { addHours, Clock } from '../../common/time/time';
-import { CONFIG_KEYS, orders, ratings, reports, users, type Report } from '../../db/schema';
+import {
+  CONFIG_KEYS,
+  FEEDBACK_ORDER_STATUSES,
+  orders,
+  ratings,
+  reports,
+  users,
+  type Report,
+} from '../../db/schema';
 import { TokenService } from '../../common/security/token.service';
 import { BehaviorService } from '../behavior/behavior.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -23,7 +34,12 @@ import type {
   ResolveReportDto,
 } from './reports.dto';
 
-const REPORTABLE_STATUSES = ['COMPLETED', 'ENDED_EARLY_BY_HIRER', 'ENDED_EARLY_BY_PLAYER'] as const;
+/**
+ * A report filed while the order is DISPUTED is the objection itself: the
+ * settlement job refuses to release the payout while a PENDING report exists,
+ * so filing one freezes the money for a moderator without any extra state.
+ */
+const REPORTABLE_STATUSES = FEEDBACK_ORDER_STATUSES;
 
 const reporterTable = alias(users, 'reporter');
 const targetTable = alias(users, 'target');
@@ -43,6 +59,7 @@ export class ReportsService {
     private readonly wallet: WalletService,
     private readonly orders: OrdersService,
     private readonly tokens: TokenService,
+    private readonly audit: AuditService,
   ) {}
 
   async create(reporterId: string, orderId: string, message: string): Promise<ReportDto> {
@@ -101,8 +118,8 @@ export class ReportsService {
 
         await this.notifications.send(tx, {
           userId: targetId,
-          title: 'You have been reported',
-          body: `A report was filed on order ${orderId}. Our moderators will review it.`,
+          title: 'Bạn vừa bị báo cáo',
+          body: 'Một người dùng đã báo cáo bạn trong một lượt thuê. Kiểm duyệt viên sẽ xem xét.',
           referenceUrl: `/orders/${orderId}`,
         });
 
@@ -141,7 +158,7 @@ export class ReportsService {
         .innerJoin(reporterTable, eq(reporterTable.id, reports.reporterId))
         .innerJoin(targetTable, eq(targetTable.id, reports.targetId))
         .where(where)
-        .orderBy(desc(reports.createdAt))
+        .orderBy(desc(reports.createdAt), desc(reports.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(reports).where(where),
@@ -196,7 +213,7 @@ export class ReportsService {
         .innerJoin(reporterTable, eq(reporterTable.id, reports.reporterId))
         .innerJoin(targetTable, eq(targetTable.id, reports.targetId))
         .where(where)
-        .orderBy(desc(reports.createdAt))
+        .orderBy(desc(reports.createdAt), desc(reports.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(reports).where(where),
@@ -205,7 +222,8 @@ export class ReportsService {
     return paginated(rows.map((row) => this.map(row)), total?.value ?? 0, query.page, query.pageSize);
   }
 
-  async resolve(adminId: string, reportId: string, dto: ResolveReportDto): Promise<ReportDto> {
+  async resolve(admin: AuthUser, reportId: string, dto: ResolveReportDto): Promise<ReportDto> {
+    const adminId = admin.id;
     const outcome = await this.db.transaction(async (tx) => {
       const [report] = await tx.select().from(reports).where(eq(reports.id, reportId)).for('update');
       if (!report) throw AppError.notFound(ErrorCode.reportNotFound, 'Report not found');
@@ -213,7 +231,37 @@ export class ReportsService {
         throw AppError.conflict(ErrorCode.alreadyResolved, `Report is already ${report.status}`);
       }
 
+      // Taking money from one party or locking an account out needs a written
+      // reason, and it lands in the audit log beside the decision.
+      if ((dto.refundAmount ?? 0) > 0 || dto.disableAccount) {
+        if (!dto.note?.trim()) {
+          throw AppError.unprocessable(
+            ErrorCode.reasonRequired,
+            'A note is required when money is refunded or an account is locked',
+          );
+        }
+      }
+
       const now = this.clock.now();
+
+      const auditDecision = (disabled: boolean) =>
+        this.audit.log(tx, {
+          adminId: admin.id,
+          adminRole: admin.adminRole,
+          action: AUDIT_ACTIONS.reportResolve,
+          entity: 'report',
+          entityId: report.id,
+          reason: dto.note,
+          detail: {
+            decision: dto.decision,
+            orderId: report.orderId,
+            targetId: report.targetId,
+            points: dto.points ?? 0,
+            satisfaction: dto.satisfaction ?? 0,
+            refundAmount: dto.refundAmount ?? 0,
+            accountLocked: disabled,
+          },
+        });
 
       if (dto.decision === 'REJECTED') {
         const [updated] = await tx
@@ -229,11 +277,16 @@ export class ReportsService {
 
         await this.notifications.send(tx, {
           userId: report.reporterId,
-          title: 'Report dismissed',
-          body: dto.note ? `Your report was dismissed: ${dto.note}` : 'Your report was reviewed and dismissed.',
-          referenceUrl: `/reports/${report.id}`,
+          title: 'Báo cáo không được chấp nhận',
+          body: dto.note
+            ? `Báo cáo của bạn không được chấp nhận: ${dto.note}`
+            : 'Báo cáo của bạn đã được xem xét và không được chấp nhận.',
+          // Points at the order, not the report: the app has no report screen, and
+          // the order detail is where both parties can still see what happened.
+          referenceUrl: `/orders/${report.orderId}`,
         });
 
+        await auditDecision(false);
         return { report: updated, disabled: false, targetId: report.targetId };
       }
 
@@ -246,7 +299,7 @@ export class ReportsService {
           'REPORT_APPROVED',
           { points: points > 0 ? -points : undefined, satisfaction: satisfaction > 0 ? -satisfaction : undefined },
           report.id,
-          dto.note ?? 'Upheld report',
+          dto.note ?? 'Báo cáo được chấp nhận',
         );
         await this.stats.recompute(report.targetId, tx);
       }
@@ -268,6 +321,8 @@ export class ReportsService {
             `Refund cannot exceed the player payout (${maxRefund} VND)`,
           );
         }
+        // The cumulative ceiling — payout minus every refund already paid on
+        // this order — lives in the wallet service, next to the rows it counts.
         await this.wallet.refundFromPlayerToHirer(tx, {
           orderId: report.orderId,
           playerId: report.targetId,
@@ -281,7 +336,7 @@ export class ReportsService {
         await this.orders.interruptActiveForUser(
           tx,
           report.targetId,
-          'Account disabled after an upheld report',
+          'Tài khoản bị khóa vì một báo cáo đã được xác nhận',
           adminId,
           now,
         );
@@ -304,26 +359,27 @@ export class ReportsService {
 
       const penalty =
         points > 0 || satisfaction > 0
-          ? ` Deducted ${points} behavior points and ${satisfaction} satisfaction points.`
+          ? ` Bạn bị trừ ${points} điểm hành vi và ${satisfaction} điểm hài lòng.`
           : '';
-      const compensation = refunded > 0 ? ` ${refunded} VND was refunded to the hirer.` : '';
-      const locked = dto.disableAccount ? ' Your account has been locked.' : '';
+      const compensation = refunded > 0 ? ` Người thuê đã được hoàn ${formatVnd(refunded)}.` : '';
+      const locked = dto.disableAccount ? ' Tài khoản của bạn đã bị khóa.' : '';
 
       await this.notifications.sendMany(tx, [
         {
           userId: report.targetId,
-          title: 'Report upheld',
-          body: `A report against you was upheld.${penalty}${locked}${dto.note ? ` Note: ${dto.note}` : ''}`,
-          referenceUrl: `/reports/${report.id}`,
+          title: 'Báo cáo được chấp nhận',
+          body: `Một báo cáo về bạn đã được chấp nhận.${penalty}${locked}${dto.note ? ` Ghi chú: ${dto.note}` : ''}`,
+          referenceUrl: `/orders/${report.orderId}`,
         },
         {
           userId: report.reporterId,
-          title: 'Report upheld',
-          body: `Your report was upheld.${compensation}${dto.note ? ` Note: ${dto.note}` : ''}`,
-          referenceUrl: `/reports/${report.id}`,
+          title: 'Báo cáo được chấp nhận',
+          body: `Báo cáo của bạn đã được chấp nhận.${compensation}${dto.note ? ` Ghi chú: ${dto.note}` : ''}`,
+          referenceUrl: `/orders/${report.orderId}`,
         },
       ]);
 
+      await auditDecision(Boolean(dto.disableAccount));
       return { report: updated, disabled: Boolean(dto.disableAccount), targetId: report.targetId };
     });
 

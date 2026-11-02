@@ -1,11 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, count, desc, eq, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
+import { AUDIT_ACTIONS, AuditService } from '../../common/audit/audit.service';
 import { DB, type AppDatabase, type DbExecutor } from '../../common/database/database.module';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
 import { isUniqueViolation } from '../../common/errors/pg-errors';
-import { MIN_DONATION, MIN_WITHDRAWAL } from '../../common/money/money';
+import { formatVnd, MIN_DONATION, MIN_WITHDRAWAL } from '../../common/money/money';
 import { offsetOf, paginated, type PageQueryDto, type Paginated } from '../../common/pagination/pagination';
+import type { AuthUser } from '../../common/security/auth-user';
 import { PasswordService } from '../../common/security/password.service';
 import { TokenService } from '../../common/security/token.service';
 import { Clock } from '../../common/time/time';
@@ -38,6 +40,7 @@ export class CharityService {
     private readonly passwords: PasswordService,
     private readonly tokens: TokenService,
     private readonly clock: Clock,
+    private readonly audit: AuditService,
   ) {}
 
   async list(query: ListCharitiesQuery): Promise<Paginated<CharityView>> {
@@ -51,7 +54,7 @@ export class CharityService {
         .select()
         .from(charities)
         .where(where)
-        .orderBy(desc(charities.createdAt))
+        .orderBy(desc(charities.createdAt), desc(charities.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(charities).where(where),
@@ -158,7 +161,7 @@ export class CharityService {
           direction: 'DEBIT',
           type: 'DONATION',
           amount,
-          note: `Donation to ${charity.organizationName}`,
+          note: `Ủng hộ cho ${charity.organizationName}`,
         },
         {
           accountType: 'CHARITY',
@@ -167,14 +170,14 @@ export class CharityService {
           direction: 'CREDIT',
           type: 'DONATION',
           amount,
-          note: `Donation from ${donorRow.name}`,
+          note: `Ủng hộ từ ${donorRow.name}`,
         },
       ]);
 
       await this.notifications.send(tx, {
         userId: charity.userId,
-        title: 'New donation received',
-        body: `${donorRow.name} donated ${amount} VND${message ? ` — ${message}` : ''}`,
+        title: 'Nhận được ủng hộ mới',
+        body: `${donorRow.name} đã ủng hộ ${formatVnd(amount)}${message ? ` — ${message}` : ''}`,
         referenceUrl: `/charities/${charity.id}`,
       });
 
@@ -271,8 +274,8 @@ export class CharityService {
         charityUserId: locked.userId,
         amount,
         flow: 'OUT',
-        charityNote: note ?? 'Charity withdrawal requested',
-        externalNote: `Withdrawal payout for ${locked.organizationName}`,
+        charityNote: note ?? 'Từ thiện: quỹ yêu cầu rút tiền',
+        externalNote: `Từ thiện: chuyển tiền cho ${locked.organizationName}`,
       });
 
       return row;
@@ -292,7 +295,7 @@ export class CharityService {
         .select()
         .from(charityWithdrawals)
         .where(where)
-        .orderBy(desc(charityWithdrawals.createdAt))
+        .orderBy(desc(charityWithdrawals.createdAt), desc(charityWithdrawals.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(charityWithdrawals).where(where),
@@ -335,7 +338,7 @@ export class CharityService {
         charityUserId: locked.userId,
         amount: withdrawal.amount,
         flow: 'IN',
-        charityNote: 'Withdrawal cancelled by charity',
+        charityNote: 'Từ thiện: quỹ đã huỷ yêu cầu rút',
       });
 
       const [row] = await tx
@@ -362,7 +365,7 @@ export class CharityService {
         .from(charities)
         .innerJoin(users, eq(users.id, charities.userId))
         .where(where)
-        .orderBy(desc(charities.createdAt))
+        .orderBy(desc(charities.createdAt), desc(charities.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(charities).where(where),
@@ -383,7 +386,7 @@ export class CharityService {
     );
   }
 
-  async adminCreate(dto: CreateCharityAccountDto): Promise<CharityView> {
+  async adminCreate(admin: AuthUser, dto: CreateCharityAccountDto): Promise<CharityView> {
     const passwordHash = await this.passwords.hash(dto.password);
 
     try {
@@ -414,6 +417,15 @@ export class CharityService {
           })
           .returning();
 
+        await this.audit.log(tx, {
+          adminId: admin.id,
+          adminRole: admin.adminRole,
+          action: AUDIT_ACTIONS.charityCreate,
+          entity: 'charity',
+          entityId: row.id,
+          detail: { organizationName: row.organizationName, email: row.email },
+        });
+
         return row;
       });
 
@@ -426,34 +438,48 @@ export class CharityService {
     }
   }
 
-  async adminUpdate(charityId: string, dto: UpdateCharityAsAdminDto): Promise<CharityView> {
+  async adminUpdate(admin: AuthUser, charityId: string, dto: UpdateCharityAsAdminDto): Promise<CharityView> {
     const [charity] = await this.db.select().from(charities).where(eq(charities.id, charityId)).limit(1);
     if (!charity) throw AppError.notFound(ErrorCode.charityNotFound, 'Charity not found');
+
+    const next = {
+      organizationName: dto.organizationName ?? charity.organizationName,
+      information: dto.information ?? charity.information,
+      address: dto.address ?? charity.address,
+      email: dto.contactEmail ?? charity.email,
+      phone: dto.phone ?? charity.phone,
+      avatarUrl: dto.avatarUrl ?? charity.avatarUrl,
+      isActive: dto.isActive ?? charity.isActive,
+    };
 
     await this.db.transaction(async (tx) => {
       await tx
         .update(charities)
-        .set({
-          organizationName: dto.organizationName ?? charity.organizationName,
-          information: dto.information ?? charity.information,
-          address: dto.address ?? charity.address,
-          email: dto.contactEmail ?? charity.email,
-          phone: dto.phone ?? charity.phone,
-          avatarUrl: dto.avatarUrl ?? charity.avatarUrl,
-          isActive: dto.isActive ?? charity.isActive,
-          updatedAt: this.clock.now(),
-        })
+        .set({ ...next, updatedAt: this.clock.now() })
         .where(eq(charities.id, charity.id));
 
       await tx
         .update(users)
         .set({
-          name: (dto.organizationName ?? charity.organizationName).slice(0, 100),
-          avatarUrl: dto.avatarUrl ?? charity.avatarUrl,
+          name: next.organizationName.slice(0, 100),
+          avatarUrl: next.avatarUrl,
           ...(dto.isActive === undefined ? {} : { isActive: dto.isActive }),
           updatedAt: this.clock.now(),
         })
         .where(eq(users.id, charity.userId));
+
+      await this.audit.log(tx, {
+        adminId: admin.id,
+        adminRole: admin.adminRole,
+        action: AUDIT_ACTIONS.charityUpdate,
+        entity: 'charity',
+        entityId: charity.id,
+        detail: {
+          fields: Object.keys(dto),
+          before: { isActive: charity.isActive },
+          after: { isActive: next.isActive },
+        },
+      });
     });
 
     if (dto.isActive === false) {
@@ -472,7 +498,7 @@ export class CharityService {
         .from(charityWithdrawals)
         .innerJoin(charities, eq(charities.id, charityWithdrawals.charityId))
         .where(where)
-        .orderBy(desc(charityWithdrawals.createdAt))
+        .orderBy(desc(charityWithdrawals.createdAt), desc(charityWithdrawals.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(charityWithdrawals).where(where),
@@ -487,7 +513,7 @@ export class CharityService {
   }
 
   async adminResolveWithdrawal(
-    adminId: string,
+    admin: AuthUser,
     withdrawalId: string,
     dto: ResolveCharityWithdrawalDto,
   ): Promise<CharityWithdrawalView> {
@@ -516,7 +542,7 @@ export class CharityService {
           charityUserId: charity.userId,
           amount: withdrawal.amount,
           flow: 'IN',
-          charityNote: 'Withdrawal rejected; funds returned',
+          charityNote: 'Từ thiện: yêu cầu rút bị từ chối, tiền đã hoàn về quỹ',
         });
       }
 
@@ -524,8 +550,8 @@ export class CharityService {
         .update(charityWithdrawals)
         .set({
           status: dto.decision,
-          note: dto.note ?? withdrawal.note,
-          processedBy: adminId,
+          note: dto.note,
+          processedBy: admin.id,
           processedAt: now,
         })
         .where(eq(charityWithdrawals.id, withdrawal.id))
@@ -533,12 +559,27 @@ export class CharityService {
 
       await this.notifications.send(tx, {
         userId: charity.userId,
-        title: dto.decision === 'PAID' ? 'Charity withdrawal paid' : 'Charity withdrawal rejected',
+        title: dto.decision === 'PAID' ? 'Đã chuyển tiền rút' : 'Yêu cầu rút tiền bị từ chối',
         body:
           dto.decision === 'PAID'
-            ? `A withdrawal of ${withdrawal.amount} VND was processed.`
-            : `A withdrawal of ${withdrawal.amount} VND was rejected and returned to your balance.${dto.note ? ` Note: ${dto.note}` : ''}`,
+            ? `Yêu cầu rút ${formatVnd(withdrawal.amount)} đã được xử lý.`
+            : `Yêu cầu rút ${formatVnd(withdrawal.amount)} bị từ chối và đã được hoàn vào số dư của bạn. Ghi chú: ${dto.note}`,
         referenceUrl: '/charity/me/withdrawals',
+      });
+
+      await this.audit.log(tx, {
+        adminId: admin.id,
+        adminRole: admin.adminRole,
+        action: AUDIT_ACTIONS.charityPayoutResolve,
+        entity: 'charity_withdrawal',
+        entityId: row.id,
+        reason: dto.note,
+        detail: {
+          charity: charity.organizationName,
+          amount: withdrawal.amount,
+          before: withdrawal.status,
+          after: row.status,
+        },
       });
 
       return { row, charityName: charity.organizationName };
@@ -561,7 +602,7 @@ export class CharityService {
         .innerJoin(charities, eq(charities.id, donations.charityId))
         .innerJoin(users, eq(users.id, donations.donorId))
         .where(where)
-        .orderBy(desc(donations.createdAt))
+        .orderBy(desc(donations.createdAt), desc(donations.id))
         .limit(query.pageSize)
         .offset(offsetOf(query.page, query.pageSize)),
       this.db.select({ value: count() }).from(donations).where(where),

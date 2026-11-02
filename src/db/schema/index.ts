@@ -1,5 +1,6 @@
 export * from './enums';
 export * from './users';
+export * from './admin';
 export * from './auth';
 export * from './catalog';
 export * from './orders';
