@@ -5,8 +5,8 @@ It keeps the full domain — hiring gamers, escrow wallet, ratings, reports, beh
 admin moderation, chat, notifications, search history and recommendations — behind a redesigned,
 consistent REST API at `/api/v2`.
 
-The original .NET source at `C:\Users\manhk\Downloads\RemakeCapstoneProject\PlayTogether-master`
-is kept untouched as a reference. This repository is the new implementation.
+The original .NET source (the `PlayTogether` ASP.NET Core / EF Core capstone) is kept locally as an
+untouched reference. This repository is the new implementation.
 
 ---
 
