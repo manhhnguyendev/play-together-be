@@ -51,6 +51,8 @@ import type {
   FavoriteGameItemDto,
   PlayerModeDto,
   SearchPlayersQuery,
+  SessionStatsQuery,
+  SessionStatsView,
   UpdateAvailabilityDto,
   UpdateProfileDto,
   UpsertSkillDto,
@@ -88,6 +90,14 @@ export class UsersService {
     const user = await this.requireById(id);
     if (!user.isActive) throw AppError.forbidden(ErrorCode.userNotActive, 'This account is locked');
     return user;
+  }
+
+  /**
+   * The statistics screen's time-series. Owned by `StatsService` because it is
+   * derived from the order rows, the same way every other published counter is.
+   */
+  sessionStats(userId: string, query: SessionStatsQuery): Promise<SessionStatsView> {
+    return this.stats.sessionStats(userId, query);
   }
 
   async getProfile(id: string, viewerId?: string): Promise<UserProfile> {

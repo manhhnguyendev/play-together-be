@@ -727,6 +727,61 @@
         ]
       }
     },
+    "/api/v2/users/me/session-stats": {
+      "get": {
+        "operationId": "UsersController_sessionStats",
+        "parameters": [
+          {
+            "name": "granularity",
+            "required": false,
+            "in": "query",
+            "description": "Cut the window into local days or local months, in the app timezone",
+            "schema": {
+              "default": "day",
+              "type": "string",
+              "enum": [
+                "day",
+                "month"
+              ]
+            }
+          },
+          {
+            "name": "buckets",
+            "required": false,
+            "in": "query",
+            "description": "Number of periods ending with the current one",
+            "schema": {
+              "minimum": 1,
+              "maximum": 62,
+              "default": 14,
+              "example": 14,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionStatsView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "My finished sessions bucketed per day or per month",
+        "tags": [
+          "users"
+        ]
+      }
+    },
     "/api/v2/users/me/status": {
       "patch": {
         "operationId": "UsersController_updateStatus",
@@ -7252,6 +7307,72 @@
           "availability",
           "isBlockedByMe",
           "canHire"
+        ]
+      },
+      "SessionBucketView": {
+        "type": "object",
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "example": "2026-11-03",
+            "description": "Local period key: yyyy-MM-dd per day, yyyy-MM per month"
+          },
+          "startsAt": {
+            "type": "string",
+            "description": "Instant the period starts at in the app timezone"
+          },
+          "playerSessions": {
+            "type": "number",
+            "description": "Sessions I worked as a player and finished in this period"
+          },
+          "playerHours": {
+            "type": "number",
+            "description": "Booked hours of those sessions"
+          },
+          "earned": {
+            "type": "number",
+            "description": "VND paid to me as a player, after the platform fee"
+          },
+          "hirerSessions": {
+            "type": "number",
+            "description": "Sessions I booked as a hirer and finished in this period"
+          },
+          "spent": {
+            "type": "number",
+            "description": "VND I paid as a hirer"
+          }
+        },
+        "required": [
+          "bucket",
+          "startsAt",
+          "playerSessions",
+          "playerHours",
+          "earned",
+          "hirerSessions",
+          "spent"
+        ]
+      },
+      "SessionStatsView": {
+        "type": "object",
+        "properties": {
+          "granularity": {
+            "enum": [
+              "day",
+              "month"
+            ],
+            "type": "string"
+          },
+          "buckets": {
+            "description": "Oldest period first. Periods without activity are included as zero.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionBucketView"
+            }
+          }
+        },
+        "required": [
+          "granularity",
+          "buckets"
         ]
       },
       "UpdateProfileDto": {

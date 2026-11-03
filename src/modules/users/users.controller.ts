@@ -32,6 +32,8 @@ import {
   FavoriteGameItemDto,
   PlayerModeDto,
   SearchPlayersQuery,
+  SessionStatsQuery,
+  SessionStatsView,
   UpdateAvailabilityDto,
   UpdateProfileDto,
   UpdateSkillRankDto,
@@ -63,6 +65,14 @@ export class UsersController {
   @ApiOkResponse({ type: UserProfileView })
   me(@CurrentUser() user: AuthUser) {
     return this.users.getProfile(user.id, user.id);
+  }
+
+  @ApiBearerAuth()
+  @Get('me/session-stats')
+  @ApiOperation({ summary: 'My finished sessions bucketed per day or per month' })
+  @ApiOkResponse({ type: SessionStatsView })
+  sessionStats(@CurrentUser() user: AuthUser, @Query() query: SessionStatsQuery) {
+    return this.users.sessionStats(user.id, query);
   }
 
   @ApiBearerAuth()

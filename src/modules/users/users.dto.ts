@@ -479,3 +479,71 @@ export class UserPage {
   @ApiProperty({ type: PageMetaDto })
   meta: PageMetaDto;
 }
+
+export const SESSION_STAT_GRANULARITIES = ['day', 'month'] as const;
+export type SessionStatGranularity = (typeof SESSION_STAT_GRANULARITIES)[number];
+
+/** How many periods the app charts at once; also the most the endpoint will return. */
+export const MAX_SESSION_BUCKETS = 62;
+
+export class SessionStatsQuery {
+  @ApiPropertyOptional({
+    enum: SESSION_STAT_GRANULARITIES,
+    default: 'day',
+    description: 'Cut the window into local days or local months, in the app timezone',
+  })
+  @IsOptional()
+  @IsIn(SESSION_STAT_GRANULARITIES)
+  granularity?: SessionStatGranularity;
+
+  @ApiPropertyOptional({
+    example: 14,
+    minimum: 1,
+    maximum: MAX_SESSION_BUCKETS,
+    default: 14,
+    description: 'Number of periods ending with the current one',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(MAX_SESSION_BUCKETS)
+  buckets?: number;
+}
+
+export class SessionBucketView {
+  @ApiProperty({
+    example: '2026-11-03',
+    description: 'Local period key: yyyy-MM-dd per day, yyyy-MM per month',
+  })
+  bucket: string;
+
+  @ApiProperty({ description: 'Instant the period starts at in the app timezone' })
+  startsAt: string;
+
+  @ApiProperty({ description: 'Sessions I worked as a player and finished in this period' })
+  playerSessions: number;
+
+  @ApiProperty({ description: 'Booked hours of those sessions' })
+  playerHours: number;
+
+  @ApiProperty({ description: 'VND paid to me as a player, after the platform fee' })
+  earned: number;
+
+  @ApiProperty({ description: 'Sessions I booked as a hirer and finished in this period' })
+  hirerSessions: number;
+
+  @ApiProperty({ description: 'VND I paid as a hirer' })
+  spent: number;
+}
+
+export class SessionStatsView {
+  @ApiProperty({ enum: SESSION_STAT_GRANULARITIES })
+  granularity: SessionStatGranularity;
+
+  @ApiProperty({
+    type: [SessionBucketView],
+    description: 'Oldest period first. Periods without activity are included as zero.',
+  })
+  buckets: SessionBucketView[];
+}

@@ -7,11 +7,15 @@ import {
   isWithinAvailability,
   MS_HOUR,
   MS_MINUTE,
+  periodStartsInZone,
   startOfDayInZone,
+  startOfMonthInZone,
   zonedParts,
 } from './time';
 
 const HCM = 'Asia/Ho_Chi_Minh';
+
+const toIso = (date: Date): string => date.toISOString();
 
 describe('time helpers', () => {
   it('adds minutes and hours without mutating the input', () => {
@@ -38,6 +42,53 @@ describe('time helpers', () => {
     expect(startOfDayInZone(new Date('2026-01-15T12:00:00.000Z'), HCM).toISOString()).toBe(
       '2026-01-14T17:00:00.000Z',
     );
+  });
+
+  it('finds local first-of-month midnight', () => {
+    expect(startOfMonthInZone(new Date('2026-01-15T12:00:00.000Z'), HCM).toISOString()).toBe(
+      '2025-12-31T17:00:00.000Z',
+    );
+    // Standing two hours into the local February still names February.
+    expect(startOfMonthInZone(new Date('2026-01-31T20:00:00.000Z'), HCM).toISOString()).toBe(
+      '2026-01-31T17:00:00.000Z',
+    );
+  });
+
+  describe('periodStartsInZone', () => {
+    it('walks whole local days back, oldest first', () => {
+      const now = new Date('2026-01-15T12:00:00.000Z'); // 19:00 Thu, local
+      expect(periodStartsInZone(now, HCM, 'day', 3).map(toIso)).toEqual([
+        '2026-01-12T17:00:00.000Z',
+        '2026-01-13T17:00:00.000Z',
+        '2026-01-14T17:00:00.000Z',
+      ]);
+    });
+
+    it('counts the period the clock is standing in as the newest one', () => {
+      const midnightSharp = new Date('2026-01-14T17:00:00.000Z'); // 00:00 Fri, local
+      expect(periodStartsInZone(midnightSharp, HCM, 'day', 2).map(toIso)).toEqual([
+        '2026-01-13T17:00:00.000Z',
+        '2026-01-14T17:00:00.000Z',
+      ]);
+    });
+
+    it('walks whole local months back', () => {
+      const now = new Date('2026-01-15T12:00:00.000Z');
+      expect(periodStartsInZone(now, HCM, 'month', 3).map(toIso)).toEqual([
+        '2025-10-31T17:00:00.000Z',
+        '2025-11-30T17:00:00.000Z',
+        '2025-12-31T17:00:00.000Z',
+      ]);
+    });
+
+    it('does not skip a month when the window crosses a year boundary', () => {
+      const january = new Date('2026-01-05T02:00:00.000Z'); // 09:00 local, Jan
+      expect(periodStartsInZone(january, HCM, 'month', 3).map(toIso)).toEqual([
+        '2025-10-31T17:00:00.000Z',
+        '2025-11-30T17:00:00.000Z',
+        '2025-12-31T17:00:00.000Z',
+      ]);
+    });
   });
 
   it('checks weekly availability windows in local time', () => {

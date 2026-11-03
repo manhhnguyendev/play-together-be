@@ -97,6 +97,50 @@ export function startOfDayInZone(date: Date, timeZone: string): Date {
   return new Date(localMidnight - timeZoneOffsetMs(date, timeZone));
 }
 
+/**
+ * Local first-of-month midnight that contains `date`, cut the same way
+ * `startOfDayInZone` cuts a day, so both boundaries agree with each other.
+ */
+export function startOfMonthInZone(date: Date, timeZone: string): Date {
+  const parts = zonedParts(date, timeZone);
+  const localFirst = Date.UTC(parts.year, parts.month - 1, 1, 0, 0, 0, 0);
+  return new Date(localFirst - timeZoneOffsetMs(date, timeZone));
+}
+
+/**
+ * The local start of each of the `count` periods ending with the one that
+ * contains `now`, oldest first.
+ *
+ * Each start is derived from a point *inside* its period rather than by
+ * subtracting a fixed span from a boundary, because a period is not a fixed
+ * number of milliseconds once a timezone observes DST. Months probe mid-month
+ * so an offset change on a month boundary cannot pull the probe into the
+ * neighbouring month.
+ */
+export function periodStartsInZone(
+  now: Date,
+  timeZone: string,
+  granularity: 'day' | 'month',
+  count: number,
+): Date[] {
+  const nowParts = zonedParts(now, timeZone);
+  const starts: Date[] = [];
+
+  for (let back = count - 1; back >= 0; back -= 1) {
+    const probe =
+      granularity === 'day'
+        ? new Date(now.getTime() - back * MS_DAY)
+        : new Date(Date.UTC(nowParts.year, nowParts.month - 1 - back, 15, 12, 0, 0));
+    starts.push(
+      granularity === 'day'
+        ? startOfDayInZone(probe, timeZone)
+        : startOfMonthInZone(probe, timeZone),
+    );
+  }
+
+  return starts;
+}
+
 export function isWithinAvailability(
   date: Date,
   windows: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }>,
