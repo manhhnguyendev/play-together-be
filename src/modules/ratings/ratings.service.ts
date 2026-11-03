@@ -8,13 +8,14 @@ import { ErrorCode } from '../../common/errors/error-codes';
 import { isUniqueViolation } from '../../common/errors/pg-errors';
 import { offsetOf, paginated, type Paginated } from '../../common/pagination/pagination';
 import type { AuthUser } from '../../common/security/auth-user';
-import { addHours, Clock } from '../../common/time/time';
+import { Clock } from '../../common/time/time';
 import { CONFIG_KEYS } from '../../db/schema';
-import { FEEDBACK_ORDER_STATUSES, orders, ratings, reports, users, type Rating } from '../../db/schema';
+import { orders, ratings, reports, users, type Rating } from '../../db/schema';
 import { BehaviorService, RATING_EFFECTS, type BehaviorChange } from '../behavior/behavior.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SystemConfigService } from '../system-config/system-config.service';
 import { StatsService } from '../users/stats.service';
+import { ratingBlock, ratingBlockedError } from './rating-eligibility';
 import type {
   ListFlaggedRatingsQuery,
   ListRatingsQuery,
@@ -23,8 +24,6 @@ import type {
   RatingSummaryDto,
   ResolveViolationDto,
 } from './ratings.dto';
-
-const RATEABLE_STATUSES = FEEDBACK_ORDER_STATUSES;
 
 type PartyRow = { id: string; name: string; avatarUrl: string | null };
 
@@ -52,45 +51,32 @@ export class RatingsService {
 
     const isHirer = order.hirerId === raterId;
     const isPlayer = order.playerId === raterId;
-    if (!isHirer && !isPlayer) {
-      throw AppError.forbidden(ErrorCode.orderNotParticipant, 'Only the hirer or the player can rate this order');
-    }
-
-    if (!RATEABLE_STATUSES.includes(order.status as (typeof RATEABLE_STATUSES)[number])) {
-      throw AppError.conflict(ErrorCode.invalidOrderState, 'Only finished orders can be rated');
-    }
-
-    const endedAt = order.endedAt ?? order.scheduledEndAt;
-    if (!endedAt) throw AppError.conflict(ErrorCode.invalidOrderState, 'Order has no completion timestamp');
-
     const windowHours = await this.configs.getNumber(CONFIG_KEYS.feedbackWindowHours);
-    if (this.clock.now().getTime() > addHours(endedAt, windowHours).getTime()) {
-      throw AppError.conflict(
-        ErrorCode.feedbackWindowClosed,
-        `Ratings are only accepted within ${windowHours} hours of the order ending`,
-      );
-    }
 
-    const [existingReport] = await this.db
-      .select({ id: reports.id })
-      .from(reports)
-      .where(and(eq(reports.orderId, orderId), eq(reports.reporterId, raterId)))
-      .limit(1);
+    const [existingReport, existingRating] = await Promise.all([
+      this.db
+        .select({ id: reports.id })
+        .from(reports)
+        .where(and(eq(reports.orderId, orderId), eq(reports.reporterId, raterId)))
+        .limit(1),
+      this.db
+        .select({ id: ratings.id })
+        .from(ratings)
+        .where(and(eq(ratings.orderId, orderId), eq(ratings.raterId, raterId)))
+        .limit(1),
+    ]);
 
-    if (existingReport) {
-      throw AppError.conflict(
-        ErrorCode.conflict,
-        'You already reported the other party on this order, so you cannot rate it',
-      );
-    }
-
-    const [existingRating] = await this.db
-      .select({ id: ratings.id })
-      .from(ratings)
-      .where(and(eq(ratings.orderId, orderId), eq(ratings.raterId, raterId)))
-      .limit(1);
-
-    if (existingRating) throw AppError.conflict(ErrorCode.alreadyRated, 'You already rated this order');
+    const block = ratingBlock({
+      status: order.status,
+      endedAt: order.endedAt,
+      scheduledEndAt: order.scheduledEndAt,
+      windowHours,
+      now: this.clock.now(),
+      participant: isHirer || isPlayer,
+      ratedByViewer: existingRating.length > 0,
+      reportedByViewer: existingReport.length > 0,
+    });
+    if (block) throw ratingBlockedError(block, windowHours);
 
     const rateeId = isHirer ? order.playerId : order.hirerId;
     const { rater, ratee } = await this.loadParties(this.db, raterId, rateeId);

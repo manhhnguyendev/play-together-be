@@ -47,6 +47,7 @@ export const ErrorCode = {
   orderNotFinished: 'order_not_finished',
   feedbackWindowClosed: 'feedback_window_closed',
   alreadyRated: 'already_rated',
+  ratingBlockedByReport: 'rating_blocked_by_report',
   selfRatingNotAllowed: 'self_rating_not_allowed',
   ratingNotFound: 'rating_not_found',
   violationNotAllowed: 'violation_not_allowed',

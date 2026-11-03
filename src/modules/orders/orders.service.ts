@@ -21,7 +21,6 @@ import {
   availabilityWindows,
   escrowHolds,
   DISPUTED_ORDER_STATUSES,
-  FEEDBACK_ORDER_STATUSES,
   games,
   orderGames,
   orders,
@@ -39,6 +38,7 @@ import {
 } from '../../db/schema';
 import { BehaviorService } from '../behavior/behavior.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { canRateOrder } from '../ratings/rating-eligibility';
 import { CONFIG_KEYS } from '../../db/schema/config';
 import { SystemConfigService } from '../system-config/system-config.service';
 import { StatsService } from '../users/stats.service';
@@ -56,8 +56,6 @@ import type {
 
 export type { OrderView };
 
-/** The session is over: the parties can rate and report each other. */
-const FEEDBACK_STATUSES = FEEDBACK_ORDER_STATUSES;
 /** A party is committed to a session that has not been played out yet. */
 const SESSION_STATUSES = SESSION_ORDER_STATUSES;
 /** Anything that has not reached an outcome yet. */
@@ -1169,7 +1167,15 @@ export class OrdersService {
     const userIds = [...new Set(rows.flatMap((row) => [row.hirerId, row.playerId]))];
     const orderIds = rows.map((row) => row.id);
 
-    const [userRows, gameRows, ratedRows, feedbackHours, disputeHours, holdRows] = await Promise.all([
+    const [
+      userRows,
+      gameRows,
+      ratedRows,
+      reportedRows,
+      feedbackHours,
+      disputeHours,
+      holdRows,
+    ] = await Promise.all([
       this.db.select().from(users).where(inArray(users.id, userIds)),
       this.db
         .select({
@@ -1186,6 +1192,10 @@ export class OrdersService {
         .select({ orderId: ratings.orderId })
         .from(ratings)
         .where(and(inArray(ratings.orderId, orderIds), eq(ratings.raterId, viewerId))),
+      this.db
+        .select({ orderId: reports.orderId })
+        .from(reports)
+        .where(and(inArray(reports.orderId, orderIds), eq(reports.reporterId, viewerId))),
       this.configs.getNumber(CONFIG_KEYS.feedbackWindowHours),
       this.configs.getNumber(CONFIG_KEYS.disputeWindowHours),
       this.db
@@ -1202,6 +1212,7 @@ export class OrdersService {
       gameMap.set(row.orderId, list);
     }
     const ratedSet = new Set(ratedRows.map((row) => row.orderId));
+    const reportedSet = new Set(reportedRows.map((row) => row.orderId));
     const holdMap = new Map(holdRows.map((row) => [row.orderId, row.status]));
 
     const now = this.clock.now();
@@ -1214,9 +1225,6 @@ export class OrdersService {
       }
 
       const isParticipant = order.hirerId === viewerId || order.playerId === viewerId;
-      const withinWindow =
-        order.endedAt !== null &&
-        now.getTime() <= order.endedAt.getTime() + feedbackHours * MS_HOUR;
       const disputeDeadline =
         order.status === 'DISPUTED' && order.disputedAt
           ? addHours(order.disputedAt, disputeHours).toISOString()
@@ -1245,11 +1253,16 @@ export class OrdersService {
         hirer: toUserSummary(hirer, { includeEmail: isParticipant }),
         player: toUserSummary(player, { includeEmail: isParticipant }),
         games: gameMap.get(order.id) ?? [],
-        canRate:
-          isParticipant &&
-          (FEEDBACK_STATUSES as readonly string[]).includes(order.status) &&
-          withinWindow &&
-          !ratedSet.has(order.id),
+        canRate: canRateOrder({
+          status: order.status,
+          endedAt: order.endedAt,
+          scheduledEndAt: order.scheduledEndAt,
+          windowHours: feedbackHours,
+          now,
+          participant: isParticipant,
+          ratedByViewer: ratedSet.has(order.id),
+          reportedByViewer: reportedSet.has(order.id),
+        }),
         hasRated: ratedSet.has(order.id),
         escrowStatus: (holdMap.get(order.id) ?? 'NONE'),
       };
