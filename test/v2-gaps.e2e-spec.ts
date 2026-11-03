@@ -5,6 +5,30 @@ const API = '/api/v2';
 
 type LoginResult = { accessToken: string; user: { id: string; name: string } };
 
+interface SessionBucketRow {
+  bucket: string;
+  startsAt: string;
+  playerSessions: number;
+  playerHours: number;
+  earned: number;
+  hirerSessions: number;
+  spent: number;
+}
+
+interface SessionStatsResponse {
+  granularity: string;
+  buckets: SessionBucketRow[];
+}
+
+/** Today's local calendar date in the app timezone, as the API names its buckets. */
+const localDayKey = (): string =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+
 const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
 
 async function login(http: ReturnType<typeof request>, email: string, password: string): Promise<LoginResult> {
@@ -148,6 +172,55 @@ describe('v2 capability gaps (e2e)', () => {
       .set(bearer(player1.accessToken))
       .expect(200);
     expect(released.body).toEqual({ released: expect.any(Number) });
+  });
+
+  it('buckets my finished sessions per day and per month', async () => {
+    const day = await http
+      .get(`${API}/users/me/session-stats?granularity=day&buckets=7`)
+      .set(bearer(hirer1.accessToken))
+      .expect(200);
+    const body = day.body as SessionStatsResponse;
+
+    expect(body.granularity).toBe('day');
+    expect(body.buckets).toHaveLength(7);
+    // Quiet periods come back as zero rows. A chart that only receives the days
+    // with activity cannot tell "nobody booked" from "the API never looked".
+    body.buckets.forEach((row) => {
+      expect(row).toEqual({
+        bucket: expect.any(String),
+        startsAt: expect.any(String),
+        playerSessions: expect.any(Number),
+        playerHours: expect.any(Number),
+        earned: expect.any(Number),
+        hirerSessions: expect.any(Number),
+        spent: expect.any(Number),
+      });
+    });
+
+    const starts = body.buckets.map((row) => Date.parse(row.startsAt));
+    starts.forEach((value, index) => {
+      if (index > 0) expect(value).toBeGreaterThan(starts[index - 1]);
+    });
+    expect(body.buckets[body.buckets.length - 1].bucket).toBe(localDayKey());
+    expect(body.buckets[0].bucket).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    const month = await http
+      .get(`${API}/users/me/session-stats?granularity=month&buckets=3`)
+      .set(bearer(hirer1.accessToken))
+      .expect(200);
+    const monthBody = month.body as SessionStatsResponse;
+    expect(monthBody.buckets).toHaveLength(3);
+    expect(monthBody.buckets[0].bucket).toMatch(/^\d{4}-\d{2}$/);
+
+    await http
+      .get(`${API}/users/me/session-stats?granularity=week`)
+      .set(bearer(hirer1.accessToken))
+      .expect(400);
+    await http
+      .get(`${API}/users/me/session-stats?buckets=0`)
+      .set(bearer(hirer1.accessToken))
+      .expect(400);
+    await http.get(`${API}/users/me/session-stats`).expect(401);
   });
 
   it('exposes per-order ratings to the two parties and filters reports by order', async () => {
