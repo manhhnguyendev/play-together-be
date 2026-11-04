@@ -25,6 +25,8 @@ async function main(): Promise<void> {
       charityEmail: envString('SEED_CHARITY_EMAIL', 'charity@playtogether.local'),
       charityPassword: envString('SEED_CHARITY_PASSWORD', 'Charity@12345'),
       demoData: env.SEED_DEMO_DATA === true,
+      demoHistory: env.SEED_DEMO_HISTORY === true,
+      timeZone: envString('APP_TIMEZONE', 'Asia/Ho_Chi_Minh'),
       bcryptRounds: Number(env.BCRYPT_ROUNDS ?? 12),
     });
 

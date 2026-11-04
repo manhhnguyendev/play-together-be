@@ -46,9 +46,19 @@ cp .env.example .env          # Windows PowerShell: Copy-Item .env.example .env
 
 npm run db:migrate            # create tables in .data/pgdata
 npm run db:seed               # system configs, catalog, admin, charity and demo data
-
 npm run start:dev
 ```
+
+To seed a backlog of finished sessions as well — ten weeks of order history with the money, ratings,
+status hops and notifications that go with it — run the seed once with `SEED_DEMO_HISTORY=true`:
+
+```bash
+npm run db:reset                                    # drop the local cluster
+SEED_DEMO_HISTORY=true npm run db:seed              # PowerShell: $env:SEED_DEMO_HISTORY='true'; npm run db:seed
+npm run db:audit                                    # re-derive every number from the tables
+```
+
+See [Demo history](#demo-history) below for what it writes and what it refuses to do twice.
 
 - API: <http://localhost:3000/api/v2>
 - Swagger UI: <http://localhost:3000/docs>
@@ -132,6 +142,44 @@ League of Legends, plus one demo donation. Credentials can be overridden with `S
 
 ---
 
+## Demo history
+
+`SEED_DEMO_HISTORY=true npm run db:seed` (`src/db/demo-history.ts`) puts seventy days of finished
+sessions behind the six demo players and two demo hirers, plus a couple of open requests and booked
+slots for tomorrow and the day after. The base seed creates no orders, so every screen that reads
+real sessions — the session chart, both dashboards, admin Orders and Money — is otherwise empty.
+
+Each session is written the way the services write it, not as a row dropped into `orders`:
+
+- request → accept with an escrow hold debiting the hirer → live → objection window → settled,
+  with one `order_status_history` hop per step and the same Vietnamese notification copy each event
+  sends;
+- the settled amount split into the player's pending earning plus the platform fee through
+  `splitFee`, so `player_payout` equals the settled amount minus the fee;
+- a session cut short priced by `quoteEarlyEnd` at 70% of the booked slot, which refunds the rest to
+  the hirer and leaves the escrow `PARTIALLY_SETTLED`;
+- the earning's release stamped six hours after settlement — the newest sessions stay pending, so
+  the player's "chờ về ví" screen and the release job have real work;
+- wallet balances derived from the ledger rather than typed in, and player counters recomputed with
+  the same aggregates `StatsService` uses.
+
+Two rules the builder enforces: it refuses to run on a cluster that already has orders (a second
+pass would double the backlog — reset first), and nothing is dated past the clock, so a booking for
+tomorrow is still requested and paid today.
+
+`npm run db:audit` copies the cluster to `.data/pgdata-audit`, opens the copy (the API can stay up)
+and re-derives all of it: wallet against ledger, ledger groups balanced, escrow drained, payout and
+fee arithmetic, no future-dated event, release stamps, rating contracts, profile counters, the
+two-week chart and the notice links. It exits non-zero on the first disagreement.
+
+The reply window is a product setting (`order.response_window_minutes`, default 5) and the seed
+honours whatever is in `system_config` when it runs, so a seeded open request is closed by the
+scheduler minutes after the seed. To keep the request queue open for a test, raise that setting from
+the admin panel and then create the request from the hirer account — a reseed would reset the
+setting back to its default.
+
+---
+
 ## Scripts
 
 | Command | Purpose |
@@ -142,6 +190,7 @@ League of Legends, plus one demo donation. Credentials can be overridden with `S
 | `npm run db:migrate` | Apply pending migrations |
 | `npm run db:seed` | Seed configs, catalog and demo data (idempotent) |
 | `npm run db:reset` | Delete only the local `.data` database directory |
+| `npm run db:audit` | Re-derive wallets, escrow, payouts, counters and notices from a snapshot of the cluster |
 | `npm run openapi:export` | Write `openapi.json` from a running server (`OPENAPI_URL` overrides the source) |
 | `npm test` | Unit tests |
 | `npm run test:e2e` | End-to-end tests (in-memory PGlite) |

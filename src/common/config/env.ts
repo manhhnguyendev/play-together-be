@@ -32,6 +32,7 @@ export function validateEnv(raw: Record<string, unknown>): Record<string, unknow
   env.SMTP_PORT = toInt(env.SMTP_PORT, 587);
   env.SMTP_SECURE = toBool(env.SMTP_SECURE, false);
   env.SEED_DEMO_DATA = toBool(env.SEED_DEMO_DATA, false);
+  env.SEED_DEMO_HISTORY = toBool(env.SEED_DEMO_HISTORY, false);
 
   const accessSecret = rawString(env.JWT_ACCESS_SECRET);
   const refreshSecret = rawString(env.JWT_REFRESH_SECRET);

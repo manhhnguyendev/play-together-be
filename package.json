@@ -16,6 +16,7 @@
     "db:migrate": "tsx src/db/migrate-cli.ts",
     "db:seed": "tsx src/db/seed-cli.ts",
     "db:reset": "node scripts/reset-db.mjs",
+    "db:audit": "node scripts/audit-demo-data.mjs",
     "openapi:export": "node scripts/export-openapi.mjs",
     "test": "jest",
     "test:watch": "jest --watch",

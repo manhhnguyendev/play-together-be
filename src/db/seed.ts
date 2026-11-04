@@ -2,6 +2,7 @@ import * as bcrypt from 'bcryptjs';
 import { eq, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { AppDatabase } from './client';
+import { ensureDemoHistory } from './demo-history';
 import {
   behaviorPoints,
   charities,
@@ -32,6 +33,10 @@ export type SeedOptions = {
   charityEmail: string;
   charityPassword: string;
   demoData: boolean;
+  /** Ten weeks of finished sessions behind the demo accounts. Off unless asked for. */
+  demoHistory?: boolean;
+  /** Zone the seeded notifications and status reasons print their times in. */
+  timeZone?: string;
   bcryptRounds: number;
   now?: Date;
 };
@@ -45,6 +50,7 @@ export type SeedSummary = {
   admin: 'created' | 'existing';
   charity: 'created' | 'existing';
   demoUsers: number;
+  demoOrders: number;
 };
 
 const DEMO_PASSWORD = 'Demo@12345';
@@ -313,6 +319,7 @@ export async function seed(db: AppDatabase, options: SeedOptions): Promise<SeedS
     admin: 'existing',
     charity: 'existing',
     demoUsers: 0,
+    demoOrders: 0,
   };
 
   const configRows = await db
@@ -450,6 +457,17 @@ export async function seed(db: AppDatabase, options: SeedOptions): Promise<SeedS
   }
 
   await ensureDemoProfiles(db, demoPlayers, gameByName, allRanks, now);
+
+  if (options.demoHistory) {
+    const history = await ensureDemoHistory(db, {
+      players: demoPlayers.map((entry) => entry.user),
+      hirers: demoHirers.map((entry) => entry.user),
+      now,
+      timeZone: options.timeZone ?? 'Asia/Ho_Chi_Minh',
+    });
+    summary.demoOrders = history.orders;
+  }
+
   await ensureDemoDonation(db, demoHirers[0]?.user, charity, now);
 
   for (const staff of DEMO_STAFF) {
