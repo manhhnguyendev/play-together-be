@@ -434,7 +434,16 @@ test/
   env.ts, app.helper.ts   Test environment and app factory
   auth.e2e-spec.ts        Auth, rotation, reset, guards
   marketplace.e2e-spec.ts Full hire → escrow → settle → review → report → moderation flow
-  v2-gaps.e2e-spec.ts     Search filters, favorites, wallet, ratings, reports, feedback
+  booking.e2e-spec.ts     Propose/accept/reject/cancel paths and their state guards
+  dispute-window.e2e-spec.ts Payout objection window: scheduler, confirm, dispute, unwind
+  money-guards.e2e-spec.ts   Escrow, ledger and pending-credit invariants
+  admin-rbac.e2e-spec.ts     admin_role guards and the last-super-admin rule
+  admin-ops.e2e-spec.ts      Operations endpoints used by the admin console
+  pagination-stability.e2e-spec.ts Tiebreaker ordering across paged lists
+  v2-gaps.e2e-spec.ts     Search filters, favorites, wallet, ratings, reports, feedback,
+                          session stats per day and month
+  rating-block-by-report.e2e-spec.ts One rating rule: the canRate flag and the POST agree,
+                          and a report only silences the party who filed it
 ```
 
 ---
@@ -442,12 +451,15 @@ test/
 ## Testing
 
 ```bash
-npm test          # unit tests: money, time zones, pagination
+npm test          # unit tests: money, time zones, pagination, session bucketing, rating eligibility
 npm run test:e2e  # end-to-end: boots the real app against in-memory PGlite
 npm run lint      # type-aware ESLint (flat config)
 npm run typecheck
 npm run build
 ```
+
+Unit specs sit next to the code they cover (`*.spec.ts`), so `src/modules/ratings/rating-eligibility.spec.ts`
+guards the single rating rule that both `POST /orders/{id}/ratings` and the order views' `canRate` flag read.
 
 The e2e suites need `--experimental-vm-modules` because PGlite loads its WASM module dynamically;
 the npm script already passes the flag. Each suite gets a fresh in-memory database and seeds it
@@ -482,7 +494,8 @@ list; the important ones:
 | `THROTTLE_TTL` / `THROTTLE_LIMIT` | `60` / `120` | Rate limit window (seconds) and requests |
 | `JOBS_ENABLED` / `JOBS_INTERVAL_MS` | `true` / `30000` | Background scheduler |
 | `CORS_ORIGINS` | `*` | Comma-separated origins, or `*` |
-| `GOOGLE_CLIENT_ID` | empty | Enables Google sign-in when set |
+| `GOOGLE_CLIENT_ID` | empty | Enables Google sign-in when set; the ID token's `aud` must match it |
+| `GOOGLE_ANDROID_CLIENT_ID` / `GOOGLE_IOS_CLIENT_ID` | empty | Extra accepted audiences, for a native sign-in library or the Android client flow |
 | `MOMO_*` | empty | Enables the live MoMo gateway; empty = mock adapter |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | empty / `587` / `false` | Outgoing mail server; empty = log OTP codes |
 | `SMTP_USER` / `SMTP_PASS` | empty | SMTP credentials (omit for unauthenticated relays) |
