@@ -1,8 +1,10 @@
 import './env';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from '../src/app.module';
 import { DB } from '../src/common/database/database.module';
+import { serveUploadsFrom, uploadRoot } from '../src/common/storage/serve-uploads';
 import type { AppDatabase } from '../src/db/client';
 import { seed, type SeedOptions, type SeedSummary } from '../src/db/seed';
 
@@ -18,7 +20,7 @@ export const TEST_DEMO_PASSWORD = 'Demo@12345';
 
 export async function createTestApp(): Promise<TestApp> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-  const app = moduleRef.createNestApplication({ logger: ['error'] });
+  const app = moduleRef.createNestApplication<NestExpressApplication>({ logger: ['error'] });
 
   app.setGlobalPrefix('api/v2');
   app.useGlobalPipes(
@@ -29,6 +31,8 @@ export async function createTestApp(): Promise<TestApp> {
       forbidUnknownValues: true,
     }),
   );
+  // Same wiring as bootstrap(), and for the same reason: it has to be in front of the router.
+  serveUploadsFrom(app, uploadRoot(process.env.UPLOAD_DIR));
   await app.init();
 
   const db = app.get<AppDatabase>(DB);

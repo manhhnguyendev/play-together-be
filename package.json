@@ -15,6 +15,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate-cli.ts",
     "db:seed": "tsx src/db/seed-cli.ts",
+    "db:avatars": "tsx src/db/seed-avatars.ts",
     "db:reset": "node scripts/reset-db.mjs",
     "db:audit": "node scripts/audit-demo-data.mjs",
     "openapi:export": "node scripts/export-openapi.mjs",

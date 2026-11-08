@@ -7,7 +7,6 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  IsUrl,
   IsUUID,
   Matches,
   Max,
@@ -15,6 +14,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { IsImageUrl } from '../../common/validation/is-image-url';
 import {
   MAX_HOURS_PER_HIRE,
   MAX_PRICE_PER_HOUR,
@@ -53,9 +53,12 @@ export class UpdateProfileDto {
   @IsIn(GENDERS)
   gender?: (typeof GENDERS)[number];
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    example: '/uploads/2026-11/6f1d2a1e-0b0b-4a5e-9b1c-2f3a4b5c6d7e.jpg',
+    description: 'Absolute http(s) URL or a root-relative path returned by POST /uploads',
+  })
   @IsOptional()
-  @IsUrl({ require_tld: false })
+  @IsImageUrl()
   avatarUrl?: string;
 
   @ApiPropertyOptional({ maxLength: 1000 })
@@ -138,7 +141,7 @@ export class FavoriteGameItemDto {
 
 export class AddImageDto {
   @ApiProperty({ example: 'https://cdn.playtogether.local/me/1.jpg' })
-  @IsUrl({ require_tld: false })
+  @IsImageUrl()
   url: string;
 }
 

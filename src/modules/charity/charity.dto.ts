@@ -7,12 +7,12 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  IsUrl,
   Matches,
   MaxLength,
   Min,
   MinLength,
 } from 'class-validator';
+import { IsImageUrl } from '../../common/validation/is-image-url';
 import { MIN_DONATION, MIN_WITHDRAWAL } from '../../common/money/money';
 import { PageMetaDto } from '../../common/openapi/paginated.dto';
 import { PageQueryDto } from '../../common/pagination/pagination';
@@ -119,9 +119,9 @@ export class CreateCharityAccountDto {
   @MaxLength(20)
   phone?: string;
 
-  @ApiPropertyOptional({ format: 'uri' })
+  @ApiPropertyOptional({ example: '/uploads/2026-11/6f1d2a1e-0b0b-4a5e-9b1c-2f3a4b5c6d7e.png' })
   @IsOptional()
-  @IsUrl({ require_tld: false })
+  @IsImageUrl()
   @MaxLength(1000)
   avatarUrl?: string;
 }
@@ -158,9 +158,9 @@ export class UpdateCharityDto {
   @MaxLength(20)
   phone?: string;
 
-  @ApiPropertyOptional({ format: 'uri' })
+  @ApiPropertyOptional({ example: '/uploads/2026-11/6f1d2a1e-0b0b-4a5e-9b1c-2f3a4b5c6d7e.png' })
   @IsOptional()
-  @IsUrl({ require_tld: false })
+  @IsImageUrl()
   @MaxLength(1000)
   avatarUrl?: string;
 }

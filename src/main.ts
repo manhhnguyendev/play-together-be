@@ -3,10 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
+import { serveUploadsFrom, uploadRoot } from './common/storage/serve-uploads';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const config = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
 
@@ -32,6 +34,9 @@ async function bootstrap(): Promise<void> {
     }),
   );
   app.enableShutdownHooks();
+
+  const uploads = uploadRoot(config.get<string>('UPLOAD_DIR'));
+  serveUploadsFrom(app, uploads);
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Play Together API')

@@ -28,6 +28,8 @@ export function validateEnv(raw: Record<string, unknown>): Record<string, unknow
 
   env.JOBS_ENABLED = toBool(env.JOBS_ENABLED, nodeEnv !== 'test');
   env.JOBS_INTERVAL_MS = toInt(env.JOBS_INTERVAL_MS, 30_000);
+  env.UPLOAD_DIR = rawString(env.UPLOAD_DIR).trim() || 'uploads';
+  env.MAX_UPLOAD_MB = toInt(env.MAX_UPLOAD_MB, 5);
   env.EXPOSE_OTP = toBool(env.EXPOSE_OTP, nodeEnv !== 'production');
   env.SMTP_PORT = toInt(env.SMTP_PORT, 587);
   env.SMTP_SECURE = toBool(env.SMTP_SECURE, false);

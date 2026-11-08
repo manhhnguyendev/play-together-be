@@ -80,6 +80,9 @@ export const ErrorCode = {
   invalidSignature: 'invalid_signature',
   amountMismatch: 'amount_mismatch',
   databaseUnavailable: 'database_unavailable',
+  noFileUploaded: 'no_file_uploaded',
+  unsupportedImageType: 'unsupported_image_type',
+  imageTooLarge: 'image_too_large',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

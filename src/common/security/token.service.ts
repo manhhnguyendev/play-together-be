@@ -100,7 +100,7 @@ export class TokenService {
       if (!user || !user.isActive) return { kind: 'disabled' } as const;
       if (
         user.role !== 'ADMIN' &&
-        (user.status === 'MAINTAIN' || (await this.configs.isMaintenance()))
+        (user.status === 'MAINTAIN' || (await this.configs.isMaintenance(tx)))
       ) {
         return { kind: 'maintenance' } as const;
       }

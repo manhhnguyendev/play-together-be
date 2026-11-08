@@ -589,7 +589,7 @@ export class OrdersService {
         );
       }
 
-      const releaseHours = await this.configs.getNumber(CONFIG_KEYS.pendingReleaseHours);
+      const releaseHours = await this.configs.getNumber(CONFIG_KEYS.pendingReleaseHours, tx);
       const settlement = await this.wallet.settleEscrow(tx, {
         orderId: order.id,
         hirerId: order.hirerId,
@@ -835,7 +835,7 @@ export class OrdersService {
             .set({ status: 'ONLINE', updatedAt: now })
             .where(eq(users.id, order.playerId));
 
-          const windowHours = await this.configs.getNumber(CONFIG_KEYS.disputeWindowHours);
+          const windowHours = await this.configs.getNumber(CONFIG_KEYS.disputeWindowHours, tx);
           await this.notifications.sendMany(tx, [
             {
               userId: order.hirerId,

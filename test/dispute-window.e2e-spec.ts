@@ -8,6 +8,7 @@ import {
   users,
 } from '../src/db/schema';
 import { BackgroundJobs } from '../src/modules/jobs/background-jobs.service';
+import { SystemConfigService } from '../src/modules/system-config/system-config.service';
 import { createTestApp, TEST_ADMIN, TEST_DEMO_PASSWORD, type TestApp } from './app.helper';
 
 const API = '/api/v2';
@@ -126,6 +127,19 @@ describe('Payout objection window (e2e)', () => {
     // The session is over, so the player is not left marked busy forever.
     const [playerRow] = await harness.db.select().from(users).where(eq(users.id, player.user.id));
     expect(playerRow.status).toBe('ONLINE');
+  });
+
+  it('opens the window when the config cache is cold, not only when it is warm', async () => {
+    // The tick reads `disputeWindowHours` to write the notification body. Read through the service
+    // default instead of the transaction, that read goes back to the pool for a second connection,
+    // and PGlite only has the one the transaction is already holding — the tick then waits forever
+    // and every later request queues behind it. The 15-minute cache is what kept this invisible:
+    // logins warm it, so the suite's `runJobs()` never had to touch the database there.
+    const created = await sessionThatOverdue('Overdue with a cold config cache.');
+    harness.app.get(SystemConfigService).invalidate();
+
+    await expect(runJobs()).resolves.toMatchObject({ disputed: expect.any(Number) });
+    expect((await orderRow(created.id)).status).toBe('DISPUTED');
   });
 
   it('does not hold the marketplace while a payout is being reconciled', async () => {

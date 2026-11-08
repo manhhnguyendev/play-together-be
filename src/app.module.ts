@@ -10,6 +10,7 @@ import { ProblemDetailsFilter } from './common/errors/problem-details.filter';
 import { JwtAuthGuard } from './common/security/jwt-auth.guard';
 import { RolesGuard } from './common/security/roles.guard';
 import { SecurityModule } from './common/security/security.module';
+import { StorageModule } from './common/storage/storage.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BehaviorModule } from './modules/behavior/behavior.module';
@@ -26,6 +27,7 @@ import { RecommendationsModule } from './modules/recommendations/recommendations
 import { ReportsModule } from './modules/reports/reports.module';
 import { SearchHistoryModule } from './modules/search-history/search-history.module';
 import { SystemConfigModule } from './modules/system-config/system-config.module';
+import { UploadsModule } from './modules/uploads/uploads.module';
 import { UsersModule } from './modules/users/users.module';
 import { WalletModule } from './modules/wallet/wallet.module';
 
@@ -50,10 +52,12 @@ import { WalletModule } from './modules/wallet/wallet.module';
     CommonModule,
     AuditModule,
     SecurityModule,
+    StorageModule,
     SystemConfigModule,
     NotificationsModule,
     BehaviorModule,
     UsersModule,
+    UploadsModule,
     AuthModule,
     CatalogModule,
     WalletModule,

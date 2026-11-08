@@ -189,6 +189,7 @@ setting back to its default.
 | `npm run db:generate` | Generate a Drizzle migration from schema changes |
 | `npm run db:migrate` | Apply pending migrations |
 | `npm run db:seed` | Seed configs, catalog and demo data (idempotent) |
+| `npm run db:avatars` | Give records without a picture one of the `uploads/seed/` avatars, matched to gender (API must be stopped) |
 | `npm run db:reset` | Delete only the local `.data` database directory |
 | `npm run db:audit` | Re-derive wallets, escrow, payouts, counters and notices from a snapshot of the cluster |
 | `npm run openapi:export` | Write `openapi.json` from a running server (`OPENAPI_URL` overrides the source) |
@@ -378,6 +379,8 @@ them as `devCode`.
 | POST | `/admin/notifications/broadcast` | Admin | Broadcast to all users |
 | POST | `/admin/maintenance` | Admin | Toggle maintenance mode |
 | GET/PATCH | `/admin/withdrawals...` | Admin | Approve / reject payouts |
+| POST | `/uploads` | Auth | Upload one image, returns `{ url, key, contentType, size }` |
+| GET | `/uploads/*` | Public | Serves the stored image bytes |
 | GET | `/health` | Public | Liveness + database round-trip |
 
 ---
@@ -434,6 +437,32 @@ PROCESSING ──accept──▶ ACCEPTED ──scheduled end / complete──�
 
 When `system.maintenance_mode = 1`, non-admin accounts cannot log in, refresh tokens, or create
 orders. Admins are exempt.
+
+### Images and uploads
+
+`POST /uploads` (multipart, field `file`) writes the bytes to `UPLOAD_DIR/<yyyy-mm>/<uuid>.<ext>`
+and answers with a **root-relative** URL — `/uploads/2026-11/<uuid>.png`. Clients store that value
+verbatim in `avatarUrl` / `user_images.url` and prepend the API origin when rendering, so a stored
+link survives the dev machine's LAN IP changing. Absolute URLs (a Google photo, a future CDN object)
+are still accepted by those fields; `data:` URIs are not.
+
+The storage driver sits behind one interface (`src/common/storage/image-storage.ts`, bound to
+`LocalImageStorage` in `StorageModule`), so swapping in S3/GCS/Cloudinary later is a provider change
+plus a bucket policy — no controller, DTO or client rewrite.
+
+Guards, in order:
+
+| Check | Failure |
+| --- | --- |
+| A part named `file` arrived | `400 no_file_uploaded` |
+| Bytes ≤ `MAX_UPLOAD_MB` (interceptor also caps at 20 MB in memory) | `422 image_too_large` |
+| MIME is jpeg/png/gif/webp | `422 unsupported_image_type` |
+| Magic bytes match the claimed MIME | `422 unsupported_image_type` |
+
+`GET /uploads/*` is served before the router registers, with `Cross-Origin-Resource-Policy:
+cross-origin` (the app, the web build and the admin console are different origins) and a one-day
+`Cache-Control`. The directory is git-ignored except `uploads/seed/`, which holds the demo avatars
+`npm run db:avatars` assigns.
 
 ---
 
@@ -542,6 +571,8 @@ list; the important ones:
 | `BCRYPT_ROUNDS` | `12` | Password hashing cost |
 | `THROTTLE_TTL` / `THROTTLE_LIMIT` | `60` / `120` | Rate limit window (seconds) and requests |
 | `JOBS_ENABLED` / `JOBS_INTERVAL_MS` | `true` / `30000` | Background scheduler |
+| `UPLOAD_DIR` | `uploads` | Where `POST /uploads` writes, and what `/uploads/*` serves |
+| `MAX_UPLOAD_MB` | `5` | Largest accepted image; larger files are rejected before they hit the disk |
 | `CORS_ORIGINS` | `*` | Comma-separated origins, or `*` |
 | `GOOGLE_CLIENT_ID` | empty | Enables Google sign-in when set; the ID token's `aud` must match it |
 | `GOOGLE_ANDROID_CLIENT_ID` / `GOOGLE_IOS_CLIENT_ID` | empty | Extra accepted audiences, for a native sign-in library or the Android client flow |

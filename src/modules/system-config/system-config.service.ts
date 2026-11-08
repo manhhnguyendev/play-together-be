@@ -48,8 +48,8 @@ export class SystemConfigService {
     return rows.find((item) => item.key === key);
   }
 
-  async isMaintenance(): Promise<boolean> {
-    return (await this.getNumber(CONFIG_KEYS.maintenanceMode)) === 1;
+  async isMaintenance(executor: DbExecutor = this.db): Promise<boolean> {
+    return (await this.getNumber(CONFIG_KEYS.maintenanceMode, executor)) === 1;
   }
 
   async listResolved(): Promise<ResolvedConfigDto[]> {
