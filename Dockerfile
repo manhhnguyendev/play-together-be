@@ -13,18 +13,22 @@ RUN npm run build && npm prune --omit=dev
 FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     PORT=3000 \
-    PGLITE_DIR=/app/.data/pgdata
+    PGLITE_DIR=/app/.data/pgdata \
+    UPLOAD_DIR=/app/uploads
 WORKDIR /app
 
 COPY --chown=node:node --from=build /app/package.json ./package.json
 COPY --chown=node:node --from=build /app/node_modules ./node_modules
 COPY --chown=node:node --from=build /app/dist ./dist
 
-RUN mkdir -p /app/.data && chown node:node /app/.data
+# Both directories are made here, while still root, because the process drops to `node` below and
+# `/app` itself belongs to root: `POST /uploads` resolves UPLOAD_DIR against the working directory and
+# the boot mkdir would then die with EACCES on /app/uploads.
+RUN mkdir -p /app/.data /app/uploads && chown -R node:node /app/.data /app/uploads
 
 USER node
 EXPOSE 3000
-VOLUME ["/app/.data"]
+VOLUME ["/app/.data", "/app/uploads"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD node -e "require('http').get({host:'127.0.0.1',port:process.env.PORT||3000,path:'/'+(process.env.API_PREFIX||'api/v2')+'/health',agent:false,timeout:4000},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"

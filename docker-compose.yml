@@ -31,9 +31,13 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
     ports:
       - '3000:3000'
+    volumes:
+      # Without this, avatars are written into the container layer and `compose down` deletes them.
+      - uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
 
 volumes:
   pgdata:
+  uploads:

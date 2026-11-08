@@ -100,6 +100,7 @@ docker run -d --name api -p 3000:3000 \
   -e JWT_ACCESS_SECRET=change-me-access-secret-at-least-32-chars \
   -e JWT_REFRESH_SECRET=change-me-refresh-secret-at-least-32-chars \
   -v pt-data:/app/.data \
+  -v pt-uploads:/app/uploads \
   play-together-be
 
 # Or the whole stack (API + PostgreSQL 17)
@@ -108,8 +109,13 @@ docker compose up --build
 
 - Without `AUTO_MIGRATE=true`, apply migrations first: `docker compose exec api node dist/db/migrate-cli.js`.
 - Seed demo data inside the container: `docker compose exec api node dist/db/seed-cli.js`.
-- PGlite writes to `/app/.data/pgdata`; always mount a volume there or the database dies with the
-  container. `docker compose up -d postgres` still starts only the database for local development.
+- PGlite writes to `/app/.data/pgdata` and `POST /uploads` writes under `UPLOAD_DIR`, whose image
+  default is `/app/uploads`; both live inside the container's filesystem, so mount a volume at each or
+  the data dies with the container. `docker compose up -d postgres` still starts only the database for
+  local development.
+- The runtime image runs as `node`, so `/app/.data` and `/app/uploads` are created and chowned in the
+  Dockerfile: the boot `mkdirSync` cannot create them itself, and an image built without them fails the
+  CI smoke test instead of failing silently at the first upload.
 
 ### Continuous integration
 
